@@ -1,0 +1,44 @@
+# Rust
+/target/
+vigil-agent/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node
+node_modules/
+vigil-hub/.next/
+vigil-hub/out/
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib

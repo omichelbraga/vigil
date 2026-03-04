@@ -1,0 +1,60 @@
+# Vigil Agent Configuration
+# Copy to config.toml and edit for your environment.
+
+# Hub connection
+hub_url = "wss://hub.example.com/ws"
+hub_token = "your-agent-token-here"     # Set via env VIGIL_HUB_TOKEN for production
+
+# Agent identity
+agent_name = "server-01"                # Defaults to hostname if omitted
+
+# Self-update from Hub
+auto_update = false
+
+# Local SQLite buffer path (for when Hub is unreachable)
+buffer_path = "vigil-buffer.db"
+
+# How often to run all checks (seconds)
+check_interval_secs = 30
+
+# ── Monitors ──────────────────────────────────────────────
+
+[monitors]
+
+# System services (systemd on Linux, sc.exe on Windows)
+services = ["nginx", "postgresql", "redis"]
+
+# Ping (ICMP) checks
+ping = ["8.8.8.8", "1.1.1.1", "gateway.local"]
+
+# TCP port checks
+[[monitors.ports]]
+host = "127.0.0.1"
+port = 5432
+timeout_ms = 5000
+
+[[monitors.ports]]
+host = "127.0.0.1"
+port = 6379
+timeout_ms = 3000
+
+# HTTP/HTTPS endpoint checks
+[[monitors.http]]
+url = "https://example.com/api/health"
+expected_status = 200
+timeout_ms = 10000
+body_keyword = "ok"
+
+[[monitors.http]]
+url = "http://localhost:8080/status"
+expected_status = 200
+timeout_ms = 5000
+
+# TLS certificate expiry checks
+[[monitors.certs]]
+host = "example.com"
+port = 443          # optional, defaults to 443
+warn_days = 30      # optional, defaults to 30
+
+[[monitors.certs]]
+host = "api.example.com"

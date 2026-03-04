@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String?
+  passwordHash String   @map("password_hash")
+  role         String   @default("viewer") // admin, editor, viewer
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+model Agent {
+  id            String   @id @default(uuid())
+  name          String   @unique
+  tokenHash     String   @map("token_hash") // argon2 hash — never plaintext
+  lastSeen      DateTime? @map("last_seen")
+  version       String?
+  os            String?
+  hostname      String?
+  ipAddress     String?  @map("ip_address")
+  isActive      Boolean  @default(true) @map("is_active")
+  autoUpdate    Boolean  @default(false) @map("auto_update")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  checks       Check[]
+  checkResults CheckResult[]
+
+  @@map("agents")
+}
+
+model Check {
+  id           String   @id @default(uuid())
+  agentId      String   @map("agent_id")
+  name         String
+  type         String   // service, port, http, ping, cert, process, resource
+  config       Json     // monitor-specific configuration
+  enabled      Boolean  @default(true)
+  intervalSecs Int      @default(30) @map("interval_secs")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  agent   Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  results CheckResult[]
+
+  @@map("checks")
+}
+
+model CheckResult {
+  id             String   @id @default(uuid())
+  checkId        String   @map("check_id")
+  agentId        String   @map("agent_id")
+  status         String   // ok, warning, critical, unknown
+  message        String?
+  responseTimeMs Int?     @map("response_time_ms")
+  metadata       Json?
+  timestamp      DateTime @default(now())
+
+  check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
+  agent Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([checkId, timestamp])
+  @@index([agentId, timestamp])
+  @@map("check_results")
+}
+
+model AlertChannel {
+  id        String   @id @default(uuid())
+  name      String
+  type      String   // email, slack, webhook, pagerduty, teams
+  config    Json     // channel-specific config (urls, tokens, etc.)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  rules AlertRule[]
+
+  @@map("alert_channels")
+}
+
+model AlertRule {
+  id             String   @id @default(uuid())
+  name           String
+  channelId      String   @map("channel_id")
+  condition      Json     // e.g. { "status": "critical", "consecutiveCount": 3 }
+  enabled        Boolean  @default(true)
+  cooldownMinutes Int     @default(15) @map("cooldown_minutes")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  channel  AlertChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  history  AlertHistory[]
+
+  @@map("alert_rules")
+}
+
+model AlertHistory {
+  id        String   @id @default(uuid())
+  ruleId    String   @map("rule_id")
+  status    String   // fired, resolved, acknowledged
+  message   String?
+  firedAt   DateTime @default(now()) @map("fired_at")
+  resolvedAt DateTime? @map("resolved_at")
+
+  rule AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, firedAt])
+  @@map("alert_history")
+}
+
+model BrandingConfig {
+  id          String   @id @default(uuid())
+  companyName String?  @map("company_name")
+  logoUrl     String?  @map("logo_url")
+  primaryColor String? @map("primary_color")
+  faviconUrl  String?  @map("favicon_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("branding_config")
+}
+
+model CertMonitor {
+  id          String   @id @default(uuid())
+  host        String
+  port        Int      @default(443)
+  warnDays    Int      @default(30) @map("warn_days")
+  enabled     Boolean  @default(true)
+  lastChecked DateTime? @map("last_checked")
+  expiresAt   DateTime? @map("expires_at")
+  issuer      String?
+  status      String?  // valid, expiring, expired, error
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("cert_monitors")
+}
+
+model AzureKeyVaultConfig {
+  id           String   @id @default(uuid())
+  name         String
+  vaultUrl     String   @map("vault_url")
+  tenantId     String   @map("tenant_id")
+  clientId     String   @map("client_id")
+  clientSecret String   @map("client_secret") // encrypted at rest
+  enabled      Boolean  @default(true)
+  lastSynced   DateTime? @map("last_synced")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("azure_keyvault_configs")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  resource  String
+  details   Json?
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}

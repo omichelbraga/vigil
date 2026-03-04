@@ -1,0 +1,5 @@
+{
+  "name": "vigil",
+  "private": true,
+  "workspaces": ["vigil-hub"]
+}
