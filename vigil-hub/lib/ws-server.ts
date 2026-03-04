@@ -37,10 +37,9 @@ export function setupWebSocket(server: HttpServer) {
   server.on("upgrade", async (request: IncomingMessage, socket, head) => {
     const url = new URL(request.url || "/", `http://${request.headers.host}`);
 
-    // Only upgrade /ws/agent path
+    // Only handle /ws/agent — let everything else (including Next.js HMR) pass through
     if (url.pathname !== "/ws/agent" && url.pathname !== "/ws") {
-      socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
-      socket.destroy();
+      // Don't destroy — let Next.js handle its own WebSocket upgrades (HMR, etc.)
       return;
     }
 
@@ -64,23 +63,32 @@ export function setupWebSocket(server: HttpServer) {
       return;
     }
 
+    // Capture remote IP at upgrade time (before ws handshake)
+    const remoteIp =
+      (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
+      (request.socket as { remoteAddress?: string })?.remoteAddress ||
+      null;
+
     wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit("connection", ws, request, agentRecord);
+      wss.emit("connection", ws, request, { ...agentRecord, remoteIp });
     });
   });
 
   wss.on(
     "connection",
-    (ws: WebSocket, _req: IncomingMessage, agent: { id: string; name: string }) => {
-      console.log(`Agent connected: ${agent.name} (${agent.id})`);
+    (ws: WebSocket, _req: IncomingMessage, agent: { id: string; name: string; remoteIp?: string | null }) => {
+      console.log(`Agent connected: ${agent.name} (${agent.id}) from ${agent.remoteIp ?? "unknown"}`);
 
       agents.set(agent.id, { ws, agentId: agent.id, agentName: agent.name });
 
-      // Update agent status
+      // Update agent status + IP
       db.agent
         .update({
           where: { id: agent.id },
-          data: { lastSeen: new Date() },
+          data: {
+            lastSeen: new Date(),
+            ...(agent.remoteIp ? { ipAddress: agent.remoteIp } : {}),
+          },
         })
         .catch(console.error);
 

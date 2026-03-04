@@ -50,8 +50,13 @@ impl HubClient {
     }
 
     async fn connect_and_run(&self, buffer: &Arc<Mutex<EventBuffer>>) -> Result<()> {
-        // Build WebSocket URL with Bearer token in headers
-        let url = &self.hub_url;
+        // Convert http(s) to ws(s) so tungstenite accepts it
+        let url = self.hub_url
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        // Append WebSocket agent endpoint
+        let url = format!("{}/ws/agent", url.trim_end_matches('/'));
+        let url = &url;
         let request = tokio_tungstenite::tungstenite::http::Request::builder()
             .uri(url)
             .header("Authorization", format!("Bearer {}", self.hub_token))

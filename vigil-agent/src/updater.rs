@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::time::Duration;
 use tokio::fs;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Debug, Deserialize)]
 struct ReleaseInfo {

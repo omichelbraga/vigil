@@ -1,11 +1,8 @@
+import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
+
 import nodemailer from "nodemailer";
 
-async function getSession(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  return session;
-}
 
 const VALID_CHANNELS = [
   "smtp",
@@ -68,9 +65,9 @@ export async function POST(
 }
 
 async function testSmtp(config: Record<string, unknown>) {
-  if (!config.host || !config.port || !config.to) {
+  if (!config.host || !config.port) {
     return NextResponse.json(
-      { error: "SMTP requires host, port, and to fields" },
+      { error: "SMTP requires host and port" },
       { status: 400 },
     );
   }
@@ -79,20 +76,30 @@ async function testSmtp(config: Record<string, unknown>) {
     host: config.host as string,
     port: config.port as number,
     secure: (config.port as number) === 465,
+    // Only include auth if credentials provided (relay mode = no auth)
     auth: config.user
       ? { user: config.user as string, pass: config.pass as string }
       : undefined,
+    // Allow self-signed certs on internal relays
+    tls: { rejectUnauthorized: false },
   });
 
-  await transporter.sendMail({
-    from: (config.from as string) || `vigil@${config.host}`,
-    to: config.to as string,
-    subject: "Vigil - Test Notification",
-    text: "This is a test notification from Vigil monitoring system.",
-    html: "<p><strong>Vigil</strong> - This is a test notification from Vigil monitoring system.</p>",
-  });
-
-  return NextResponse.json({ success: true, message: "Test email sent" });
+  // If a to address is provided, send a real test email
+  // Otherwise just verify the connection (relay test)
+  if (config.to) {
+    await transporter.sendMail({
+      from: (config.from as string) || `vigil@${config.host}`,
+      to: config.to as string,
+      subject: "Vigil - Test Notification",
+      text: "This is a test notification from Vigil monitoring system.",
+      html: "<p><strong>Vigil</strong> - This is a test notification from Vigil monitoring system.</p>",
+    });
+    return NextResponse.json({ success: true, message: "Test email sent" });
+  } else {
+    // Verify connection without sending — works for relay mode
+    await transporter.verify();
+    return NextResponse.json({ success: true, message: "SMTP connection verified" });
+  }
 }
 
 async function testSlack(config: Record<string, unknown>) {

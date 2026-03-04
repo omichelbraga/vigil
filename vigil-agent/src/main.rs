@@ -165,13 +165,21 @@ async fn run(
     let mut interval = tokio::time::interval(check_interval);
 
     let shutdown = async {
-        let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
-            .expect("Failed to register SIGINT handler");
-        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to register SIGTERM handler");
-        tokio::select! {
-            _ = sigint.recv() => info!("Received SIGINT, shutting down"),
-            _ = sigterm.recv() => info!("Received SIGTERM, shutting down"),
+        #[cfg(unix)]
+        {
+            let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
+                .expect("Failed to register SIGINT handler");
+            let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+                .expect("Failed to register SIGTERM handler");
+            tokio::select! {
+                _ = sigint.recv() => info!("Received SIGINT, shutting down"),
+                _ = sigterm.recv() => info!("Received SIGTERM, shutting down"),
+            }
+        }
+        #[cfg(windows)]
+        {
+            signal::ctrl_c().await.expect("Failed to register Ctrl+C handler");
+            info!("Received Ctrl+C, shutting down");
         }
     };
 

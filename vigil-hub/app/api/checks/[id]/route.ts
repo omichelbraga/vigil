@@ -1,11 +1,8 @@
+import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
 
-async function getSession(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  return session;
-}
+
 
 function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);

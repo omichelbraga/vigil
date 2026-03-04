@@ -1,11 +1,8 @@
+import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
 
-async function getSession(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  return session;
-}
+
 
 function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -80,7 +77,51 @@ export async function GET(
       ? "online"
       : "offline";
 
-  return NextResponse.json({ ...agent, status, recentResults });
+  // Build a map of latest result per check
+  const latestByCheck = new Map<string, typeof recentResults[0]>();
+  for (const r of recentResults) {
+    if (!latestByCheck.has(r.checkId)) latestByCheck.set(r.checkId, r);
+  }
+
+  // Enrich checks with latest status/latency — use snake_case for UI
+  const enrichedChecks = agent.checks.map((c) => {
+    const latest = latestByCheck.get(c.id) ?? null;
+    return {
+      id: c.id,
+      name: c.name,
+      type: c.type,
+      config: c.config,
+      enabled: c.enabled,
+      interval_seconds: c.intervalSecs,
+      status: latest?.status ?? null,
+      latency_ms: latest?.responseTimeMs ?? null,
+      last_checked: latest?.timestamp ?? null,
+      last_message: latest?.message ?? null,
+    };
+  });
+
+  // Build check name lookup
+  const checkNameMap = new Map(agent.checks.map((c) => [c.id, c.name]));
+
+  // Normalize recentResults to snake_case for UI
+  const normalizedResults = recentResults.map((r) => ({
+    id: r.id,
+    check_name: checkNameMap.get(r.checkId) ?? r.checkId,
+    status: r.status,
+    latency_ms: r.responseTimeMs ?? null,
+    created_at: r.timestamp,
+    message: r.message ?? null,
+    metadata: r.metadata ?? null,
+  }));
+
+  return NextResponse.json({
+    ...agent,
+    last_seen: agent.lastSeen,
+    ip_address: agent.ipAddress,
+    checks: enrichedChecks,
+    status,
+    recentResults: normalizedResults,
+  });
 }
 
 export async function PATCH(

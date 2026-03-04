@@ -119,6 +119,11 @@ export default function SetupPage() {
         router.push("/dashboard");
       } else {
         const data = await res.json();
+        // If already set up, just go to login
+        if (res.status === 403 || data.error?.includes("already")) {
+          router.push("/login");
+          return;
+        }
         setError(data.error || "Setup failed. Please try again.");
       }
     } catch {

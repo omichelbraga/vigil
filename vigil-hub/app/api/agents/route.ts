@@ -1,13 +1,10 @@
+import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
+
 import argon2 from "argon2";
 import crypto from "crypto";
 
-async function getSession(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  return session;
-}
 
 export async function GET(req: NextRequest) {
   const session = await getSession(req);
@@ -37,6 +34,7 @@ export async function GET(req: NextRequest) {
   const now = new Date();
   const agentsWithStatus = agents.map((a) => ({
     ...a,
+    last_seen: a.lastSeen,   // snake_case alias for UI
     status:
       a.lastSeen && now.getTime() - a.lastSeen.getTime() < 120_000
         ? "online"

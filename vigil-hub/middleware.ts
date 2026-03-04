@@ -5,6 +5,8 @@ const PUBLIC_PATHS = [
   "/api/health",
   "/api/auth",
   "/api/update",
+  "/api/setup",          // first-run setup endpoints (no session yet)
+  "/api/settings/test",  // used by setup wizard before login
   "/login",
   "/setup",
   "/_next",
@@ -50,20 +52,23 @@ export function middleware(request: NextRequest) {
     return response;
   }
 
-  // Check for session cookie (Better Auth uses vigil.session_token)
+  // Check for session cookie (Better Auth sets vigil.session_token, possibly signed)
   const sessionCookie =
     request.cookies.get("vigil.session_token") ||
-    request.cookies.get("better-auth.session_token");
+    request.cookies.get("better-auth.session_token") ||
+    request.cookies.get("__Secure-vigil.session_token") ||
+    request.cookies.get("__Secure-better-auth.session_token");
+
+  const hasSession = !!sessionCookie?.value;
+
+  // For API routes: also allow Bearer tokens (agent WebSocket auth)
+  const authHeader = request.headers.get("authorization") || "";
+  const hasBearer = authHeader.startsWith("Bearer ");
 
   // Protect dashboard and API routes
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/api")) {
-    if (!sessionCookie?.value) {
+    if (!hasSession && !hasBearer) {
       if (pathname.startsWith("/api")) {
-        // For API routes, also check Bearer token (agent auth)
-        const authHeader = request.headers.get("authorization") || "";
-        if (authHeader.startsWith("Bearer ")) {
-          return response; // Let the API route handler verify the token
-        }
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
       // Redirect to login for dashboard pages

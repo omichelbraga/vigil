@@ -1,11 +1,8 @@
+import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
 
-async function getSession(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  return session;
-}
+
 
 function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -56,12 +53,41 @@ export async function GET(req: NextRequest) {
       agent: {
         select: { id: true, name: true },
       },
-      _count: { select: { results: true } },
+      results: {
+        orderBy: { timestamp: "desc" },
+        take: 1,
+        select: {
+          status: true,
+          responseTimeMs: true,
+          timestamp: true,
+          message: true,
+        },
+      },
     },
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json(checks);
+  // Flatten latest result into each check — use snake_case to match UI expectations
+  const checksWithStatus = checks.map((c) => {
+    const latest = c.results[0] ?? null;
+    return {
+      id: c.id,
+      agent_id: c.agentId,
+      agent_name: c.agent?.name ?? null,
+      name: c.name,
+      type: c.type,
+      config: c.config,
+      enabled: c.enabled,
+      interval_seconds: c.intervalSecs,
+      created_at: c.createdAt,
+      status: latest?.status ?? null,
+      latency_ms: latest?.responseTimeMs ?? null,
+      last_checked: latest?.timestamp ?? null,
+      last_message: latest?.message ?? null,
+    };
+  });
+
+  return NextResponse.json(checksWithStatus);
 }
 
 export async function POST(req: NextRequest) {

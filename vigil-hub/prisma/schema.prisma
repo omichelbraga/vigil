@@ -10,14 +10,15 @@ datasource db {
 // ── Better Auth tables ──────────────────────────────────
 
 model user {
-  id            String    @id
-  name          String
-  email         String    @unique
-  emailVerified Boolean   @default(false) @map("email_verified")
-  image         String?
-  role          String    @default("viewer") // admin, editor, viewer
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id                 String    @id
+  name               String
+  email              String    @unique
+  emailVerified      Boolean   @default(false) @map("email_verified")
+  image              String?
+  role               String    @default("viewer") // admin, editor, viewer
+  twoFactorEnabled   Boolean   @default(false) @map("two_factor_enabled")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   sessions      session[]
   accounts      account[]

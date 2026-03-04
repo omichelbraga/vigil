@@ -1,12 +1,9 @@
+import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { auth } from "@/lib/auth";
+
 import { Prisma } from "@prisma/client";
 
-async function getSession(req: NextRequest) {
-  const session = await auth.api.getSession({ headers: req.headers });
-  return session;
-}
 
 function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -72,7 +69,9 @@ export async function GET(req: NextRequest) {
   }
 
   const page = Math.max(1, parseInt(pageStr, 10) || 1);
-  const perPage = Math.min(200, Math.max(1, parseInt(perPageStr, 10) || 50));
+  // Support both `limit` (simple) and `per_page` (paginated)
+  const limitStr = searchParams.get("limit");
+  const perPage = Math.min(200, Math.max(1, parseInt(limitStr || perPageStr, 10) || 50));
 
   // Build where clause
   const where: Prisma.CheckResultWhereInput = {};
@@ -109,13 +108,13 @@ export async function GET(req: NextRequest) {
     db.checkResult.count({ where }),
   ]);
 
-  return NextResponse.json({
-    data: results,
-    pagination: {
-      page,
-      perPage,
-      total,
-      totalPages: Math.ceil(total / perPage),
-    },
-  });
+  // Return plain array when no pagination params (dashboard uses this),
+  // or paginated object when page/per_page explicitly requested
+  if (searchParams.has("page") || searchParams.has("per_page")) {
+    return NextResponse.json({
+      data: results,
+      pagination: { page, perPage, total, totalPages: Math.ceil(total / perPage) },
+    });
+  }
+  return NextResponse.json(results);
 }
