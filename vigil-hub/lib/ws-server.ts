@@ -2,6 +2,7 @@ import { Server as HttpServer, IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { db } from "./db";
 import argon2 from "argon2";
+import { processAlert } from "./alert-engine";
 
 interface ConnectedAgent {
   ws: WebSocket;
@@ -241,6 +242,16 @@ async function handleMessage(
         where: { id: agent.id },
         data: { lastSeen: new Date() },
       });
+
+      // Fire/resolve alerts based on status change
+      processAlert({
+        checkId: check.id,
+        checkName,
+        agentId: agent.id,
+        agentName: agent.name,
+        status,
+        message,
+      }).catch((err) => console.error("Alert engine error:", err));
 
       break;
     }
