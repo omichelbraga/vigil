@@ -40,6 +40,7 @@ impl Monitor for HttpMonitor {
                     status: CheckStatus::Unknown,
                     message: format!("Failed to build HTTP client: {e}"),
                     response_time_ms: None,
+                    metadata: None,
                     timestamp: Utc::now(),
                 };
             }
@@ -48,44 +49,43 @@ impl Monitor for HttpMonitor {
         let response = client.get(&self.url).send().await;
         let elapsed = start.elapsed().as_millis() as u64;
 
-        let (status, message) = match response {
+        let (status, message, meta) = match response {
             Ok(resp) => {
                 let status_code = resp.status().as_u16();
+                let meta = serde_json::json!({ "http_status_code": status_code });
                 if status_code != self.expected_status {
                     (
                         CheckStatus::Critical,
-                        format!(
-                            "{} returned status {status_code}, expected {}",
-                            self.url, self.expected_status
-                        ),
+                        format!("{} returned {status_code}, expected {}", self.url, self.expected_status),
+                        Some(meta),
                     )
                 } else if let Some(ref keyword) = self.body_keyword {
                     match resp.text().await {
                         Ok(body) => {
                             if body.contains(keyword.as_str()) {
-                                (CheckStatus::Ok, format!("{} is healthy", self.url))
+                                (CheckStatus::Ok, format!("{} is healthy", self.url), Some(meta))
                             } else {
                                 (
                                     CheckStatus::Warning,
-                                    format!(
-                                        "{} returned {status_code} but body missing keyword '{keyword}'",
-                                        self.url
-                                    ),
+                                    format!("{} missing keyword '{keyword}'", self.url),
+                                    Some(meta),
                                 )
                             }
                         }
                         Err(e) => (
                             CheckStatus::Warning,
-                            format!("{} returned {status_code} but failed to read body: {e}", self.url),
+                            format!("{} failed to read body: {e}", self.url),
+                            Some(meta),
                         ),
                     }
                 } else {
-                    (CheckStatus::Ok, format!("{} returned {status_code}", self.url))
+                    (CheckStatus::Ok, format!("{} returned {status_code}", self.url), Some(meta))
                 }
             }
             Err(e) => (
                 CheckStatus::Critical,
                 format!("{} request failed: {e}", self.url),
+                None,
             ),
         };
 
@@ -95,6 +95,7 @@ impl Monitor for HttpMonitor {
             status,
             message,
             response_time_ms: Some(elapsed),
+            metadata: meta,
             timestamp: Utc::now(),
         }
     }

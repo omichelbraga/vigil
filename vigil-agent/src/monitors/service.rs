@@ -27,6 +27,7 @@ impl Monitor for ServiceMonitor {
             status,
             message,
             response_time_ms: Some(elapsed),
+            metadata: None,
             timestamp: Utc::now(),
         }
     }
@@ -42,13 +43,11 @@ async fn check_service(name: &str) -> (CheckStatus, String) {
     match output {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if stdout == "active" {
-                (CheckStatus::Ok, format!("Service {name} is active"))
-            } else {
-                (
-                    CheckStatus::Critical,
-                    format!("Service {name} is {stdout}"),
-                )
+            match stdout.as_str() {
+                "active" => (CheckStatus::Ok, format!("Service {name} is active")),
+                "inactive" => (CheckStatus::Critical, format!("Service {name} is inactive")),
+                "failed" => (CheckStatus::Critical, format!("Service {name} has failed")),
+                other => (CheckStatus::Warning, format!("Service {name} is {other}")),
             }
         }
         Err(e) => (
@@ -71,15 +70,9 @@ async fn check_service(name: &str) -> (CheckStatus, String) {
             if stdout.contains("RUNNING") {
                 (CheckStatus::Ok, format!("Service {name} is running"))
             } else if stdout.contains("STOPPED") {
-                (
-                    CheckStatus::Critical,
-                    format!("Service {name} is stopped"),
-                )
+                (CheckStatus::Critical, format!("Service {name} is stopped"))
             } else {
-                (
-                    CheckStatus::Warning,
-                    format!("Service {name} status: {stdout}"),
-                )
+                (CheckStatus::Warning, format!("Service {name} status unknown"))
             }
         }
         Err(e) => (

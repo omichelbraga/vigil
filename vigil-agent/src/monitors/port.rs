@@ -37,7 +37,7 @@ impl Monitor for PortMonitor {
             ),
             Err(_) => (
                 CheckStatus::Critical,
-                format!("Port {addr} connection timed out after {}ms", self.timeout.as_millis()),
+                format!("Port {addr} timed out after {}ms", self.timeout.as_millis()),
             ),
         };
 
@@ -47,6 +47,7 @@ impl Monitor for PortMonitor {
             status,
             message,
             response_time_ms: Some(elapsed),
+            metadata: None,
             timestamp: Utc::now(),
         }
     }

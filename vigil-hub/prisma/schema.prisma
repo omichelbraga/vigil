@@ -7,19 +7,84 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  name         String?
-  passwordHash String   @map("password_hash")
-  role         String   @default("viewer") // admin, editor, viewer
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+// ── Better Auth tables ──────────────────────────────────
 
-  auditLogs AuditLog[]
+model user {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false) @map("email_verified")
+  image         String?
+  role          String    @default("viewer") // admin, editor, viewer
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  sessions      session[]
+  accounts      account[]
+  twoFactor     twoFactor[]
+  auditLogs     AuditLog[]
 
   @@map("users")
 }
+
+model session {
+  id        String   @id
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model account {
+  id                    String    @id
+  userId                String    @map("user_id")
+  accountId             String    @map("account_id")
+  providerId            String    @map("provider_id")
+  accessToken           String?   @map("access_token")
+  refreshToken          String?   @map("refresh_token")
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
+  scope                 String?
+  idToken               String?   @map("id_token")
+  password              String?
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("accounts")
+}
+
+model verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime @map("expires_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("verifications")
+}
+
+model twoFactor {
+  id        String @id
+  userId    String @map("user_id")
+  secret    String
+  backupCodes String @map("backup_codes")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("two_factors")
+}
+
+// ── Application models ──────────────────────────────────
 
 model Agent {
   id            String   @id @default(uuid())
@@ -79,8 +144,8 @@ model CheckResult {
 model AlertChannel {
   id        String   @id @default(uuid())
   name      String
-  type      String   // email, slack, webhook, pagerduty, teams
-  config    Json     // channel-specific config (urls, tokens, etc.)
+  type      String   // email, slack, webhook, pagerduty, teams, discord, telegram, twilio, generic
+  config    Json     // channel-specific config (urls, tokens, etc.) — encrypted values
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -109,14 +174,19 @@ model AlertRule {
 model AlertHistory {
   id        String   @id @default(uuid())
   ruleId    String   @map("rule_id")
+  checkId   String?  @map("check_id")
+  agentId   String?  @map("agent_id")
   status    String   // fired, resolved, acknowledged
   message   String?
+  channel   String?  // channel type used
+  delivered Boolean  @default(false)
   firedAt   DateTime @default(now()) @map("fired_at")
   resolvedAt DateTime? @map("resolved_at")
 
   rule AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
 
   @@index([ruleId, firedAt])
+  @@index([checkId, firedAt])
   @@map("alert_history")
 }
 
@@ -172,9 +242,45 @@ model AuditLog {
   ipAddress String?  @map("ip_address")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user user? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([action, createdAt])
   @@map("audit_logs")
+}
+
+model AgentRelease {
+  id        String   @id @default(cuid())
+  os        String   // linux, windows
+  arch      String   // amd64, arm64
+  version   String
+  sha256    String
+  filename  String
+  isActive  Boolean  @default(false) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("agent_releases")
+}
+
+model SmtpConfig {
+  id        String   @id @default(uuid())
+  host      String
+  port      Int      @default(587)
+  secure    Boolean  @default(false)
+  user      String?
+  pass      String?  // encrypted at rest
+  fromEmail String   @map("from_email")
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("smtp_config")
+}
+
+model AppConfig {
+  id    String @id @default(uuid())
+  key   String @unique
+  value String
+
+  @@map("app_config")
 }

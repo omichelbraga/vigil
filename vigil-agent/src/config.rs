@@ -23,6 +23,9 @@ pub struct Config {
 
     #[serde(default)]
     pub monitors: MonitorsConfig,
+
+    #[serde(default)]
+    pub resource: ResourceConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -41,6 +44,29 @@ pub struct MonitorsConfig {
 
     #[serde(default)]
     pub certs: Vec<CertCheck>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResourceConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_cpu_alert")]
+    pub cpu_alert_pct: f32,
+    #[serde(default = "default_ram_alert")]
+    pub ram_alert_pct: f32,
+    #[serde(default = "default_disk_alert")]
+    pub disk_alert_pct: f32,
+}
+
+impl Default for ResourceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            cpu_alert_pct: default_cpu_alert(),
+            ram_alert_pct: default_ram_alert(),
+            disk_alert_pct: default_disk_alert(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -78,6 +104,7 @@ impl Default for Config {
             buffer_path: default_buffer_path(),
             check_interval_secs: default_check_interval(),
             monitors: MonitorsConfig::default(),
+            resource: ResourceConfig::default(),
         }
     }
 }
@@ -112,6 +139,22 @@ fn default_timeout() -> u64 {
 
 fn default_expected_status() -> u16 {
     200
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_cpu_alert() -> f32 {
+    90.0
+}
+
+fn default_ram_alert() -> f32 {
+    85.0
+}
+
+fn default_disk_alert() -> f32 {
+    90.0
 }
 
 fn hostname() -> String {

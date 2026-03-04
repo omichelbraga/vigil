@@ -2,6 +2,7 @@ pub mod cert;
 pub mod http;
 pub mod ping;
 pub mod port;
+pub mod resource;
 pub mod service;
 
 use chrono::{DateTime, Utc};
@@ -25,6 +26,8 @@ pub struct CheckResult {
     pub status: CheckStatus,
     pub message: String,
     pub response_time_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
     pub timestamp: DateTime<Utc>,
 }
 

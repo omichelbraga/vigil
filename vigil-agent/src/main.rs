@@ -2,9 +2,13 @@ mod buffer;
 mod config;
 mod hub_client;
 mod monitors;
+mod updater;
 
 use anyhow::Result;
 use clap::Parser;
+use std::sync::Arc;
+use tokio::signal;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -92,10 +96,8 @@ async fn run(
 ) -> Result<()> {
     use monitors::{
         cert::CertMonitor, http::HttpMonitor, ping::PingMonitor, port::PortMonitor,
-        service::ServiceMonitor, Monitor,
+        resource::ResourceMonitor, service::ServiceMonitor, Monitor,
     };
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     let buffer = Arc::new(Mutex::new(event_buffer));
 
@@ -130,6 +132,13 @@ async fn run(
             c.warn_days.unwrap_or(30),
         )));
     }
+    if cfg.resource.enabled {
+        active_monitors.push(Box::new(ResourceMonitor::new(
+            cfg.resource.cpu_alert_pct,
+            cfg.resource.ram_alert_pct,
+            cfg.resource.disk_alert_pct,
+        )));
+    }
 
     info!(count = active_monitors.len(), "Monitors loaded");
 
@@ -141,30 +150,62 @@ async fn run(
         })
     };
 
-    // Monitoring loop
+    // Spawn auto-updater if enabled
+    let updater_handle = if cfg.auto_update {
+        let u = updater::Updater::new(&cfg.hub_url, &cfg.hub_token);
+        Some(tokio::spawn(async move {
+            u.run().await;
+        }))
+    } else {
+        None
+    };
+
+    // Monitoring loop with graceful shutdown
     let check_interval = std::time::Duration::from_secs(cfg.check_interval_secs);
     let mut interval = tokio::time::interval(check_interval);
 
+    let shutdown = async {
+        let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
+            .expect("Failed to register SIGINT handler");
+        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to register SIGTERM handler");
+        tokio::select! {
+            _ = sigint.recv() => info!("Received SIGINT, shutting down"),
+            _ = sigterm.recv() => info!("Received SIGTERM, shutting down"),
+        }
+    };
+
+    tokio::pin!(shutdown);
+
     loop {
-        interval.tick().await;
+        tokio::select! {
+            _ = &mut shutdown => {
+                info!("Graceful shutdown initiated");
+                break;
+            }
+            _ = interval.tick() => {
+                for monitor in &active_monitors {
+                    let result = monitor.check().await;
+                    info!(
+                        monitor = %result.monitor_name,
+                        status = ?result.status,
+                        "Check complete"
+                    );
 
-        for monitor in &active_monitors {
-            let result = monitor.check().await;
-            info!(
-                monitor = %result.monitor_name,
-                status = ?result.status,
-                "Check complete"
-            );
-
-            let event = serde_json::to_string(&result)?;
-            let mut buf = buffer.lock().await;
-            buf.push(&event)?;
+                    let event = serde_json::to_string(&result)?;
+                    let mut buf = buffer.lock().await;
+                    buf.push(&event)?;
+                }
+            }
         }
     }
 
-    #[allow(unreachable_code)]
-    {
-        hub_handle.abort();
-        Ok(())
+    // Cleanup
+    hub_handle.abort();
+    if let Some(h) = updater_handle {
+        h.abort();
     }
+
+    info!("Vigil agent stopped");
+    Ok(())
 }

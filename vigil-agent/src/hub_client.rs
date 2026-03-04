@@ -9,8 +9,6 @@ use tracing::{error, info, warn};
 use crate::buffer::EventBuffer;
 
 /// WebSocket client that maintains a persistent connection to the Vigil Hub.
-/// Features: token authentication, heartbeats, exponential backoff reconnect,
-/// and draining the local SQLite buffer when connected.
 pub struct HubClient {
     hub_url: String,
     hub_token: String,
@@ -26,7 +24,8 @@ impl HubClient {
         }
     }
 
-    /// Main loop: connect, authenticate, heartbeat, drain buffer, reconnect on failure.
+    /// Main loop: connect, register, heartbeat, drain buffer, reconnect on failure.
+    /// Uses exponential backoff: 1,2,4,8,16,32,60s max.
     pub async fn run(&self, buffer: Arc<Mutex<EventBuffer>>) {
         let mut backoff_secs = 1u64;
         let max_backoff = 60u64;
@@ -51,33 +50,46 @@ impl HubClient {
     }
 
     async fn connect_and_run(&self, buffer: &Arc<Mutex<EventBuffer>>) -> Result<()> {
-        let url = format!(
-            "{}?token={}&agent={}",
-            self.hub_url, self.hub_token, self.agent_name
-        );
+        // Build WebSocket URL with Bearer token in headers
+        let url = &self.hub_url;
+        let request = tokio_tungstenite::tungstenite::http::Request::builder()
+            .uri(url)
+            .header("Authorization", format!("Bearer {}", self.hub_token))
+            .header("Host", extract_host(url))
+            .header("Connection", "Upgrade")
+            .header("Upgrade", "websocket")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .body(())?;
 
-        let (ws_stream, _response) = connect_async(&url).await?;
+        let (ws_stream, _response) = connect_async(request).await?;
         let (mut write, mut read) = ws_stream.split();
 
-        info!("Connected to Hub, starting heartbeat and buffer drain");
+        info!("Connected to Hub");
 
-        // Send auth message
-        let auth_msg = serde_json::json!({
-            "type": "auth",
-            "token": self.hub_token,
+        // Send register message
+        let register = serde_json::json!({
+            "type": "register",
             "agent_name": self.agent_name,
             "version": env!("CARGO_PKG_VERSION"),
+            "os": std::env::consts::OS,
+            "hostname": sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string()),
         });
-        write.send(Message::Text(auth_msg.to_string())).await?;
+        write
+            .send(Message::Text(register.to_string()))
+            .await?;
 
         let heartbeat_interval = Duration::from_secs(30);
         let drain_interval = Duration::from_secs(5);
         let mut heartbeat_timer = tokio::time::interval(heartbeat_interval);
         let mut drain_timer = tokio::time::interval(drain_interval);
+        let mut checks_count: u64 = 0;
 
         loop {
             tokio::select! {
-                // Receive messages from Hub
                 msg = read.next() => {
                     match msg {
                         Some(Ok(Message::Text(text))) => {
@@ -97,25 +109,47 @@ impl HubClient {
                     }
                 }
 
-                // Send heartbeat
                 _ = heartbeat_timer.tick() => {
                     let hb = serde_json::json!({
                         "type": "heartbeat",
-                        "agent_name": self.agent_name,
                         "timestamp": chrono::Utc::now().to_rfc3339(),
+                        "checks_count": checks_count,
                     });
                     write.send(Message::Text(hb.to_string())).await?;
                 }
 
-                // Drain buffer
                 _ = drain_timer.tick() => {
                     let mut buf = buffer.lock().await;
                     let events = buf.drain(50)?;
+                    checks_count += events.len() as u64;
                     for event in events {
-                        write.send(Message::Text(event)).await?;
+                        // Wrap each event as a check_result message
+                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&event) {
+                            let msg = serde_json::json!({
+                                "type": "check_result",
+                                "check_name": parsed.get("monitor_name").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                "status": parsed.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                                "latency_ms": parsed.get("response_time_ms").and_then(|v| v.as_u64()),
+                                "message": parsed.get("message").and_then(|v| v.as_str()).unwrap_or(""),
+                                "metadata": parsed.get("metadata"),
+                                "checked_at": parsed.get("timestamp").and_then(|v| v.as_str()).unwrap_or(""),
+                            });
+                            write.send(Message::Text(msg.to_string())).await?;
+                        } else {
+                            write.send(Message::Text(event)).await?;
+                        }
                     }
                 }
             }
         }
     }
+}
+
+fn extract_host(url: &str) -> String {
+    url.replace("wss://", "")
+        .replace("ws://", "")
+        .split('/')
+        .next()
+        .unwrap_or("localhost")
+        .to_string()
 }
