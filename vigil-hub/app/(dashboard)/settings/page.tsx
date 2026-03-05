@@ -13,6 +13,7 @@ import {
   Plus,
   Trash2,
   Activity,
+  ShieldCheck,
 } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { cn } from "@/lib/utils";
@@ -86,6 +87,15 @@ export default function SettingsPage() {
   const [azureClientSecret, setAzureClientSecret] = useState("");
   const [azureVaultUrl, setAzureVaultUrl] = useState("");
 
+  // OAuth Providers
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState("");
+  const [googleClientSecret, setGoogleClientSecret] = useState("");
+  const [microsoftEnabled, setMicrosoftEnabled] = useState(false);
+  const [microsoftClientId, setMicrosoftClientId] = useState("");
+  const [microsoftClientSecret, setMicrosoftClientSecret] = useState("");
+  const [microsoftTenantId, setMicrosoftTenantId] = useState("common");
+
   useEffect(() => {
     async function loadSettings() {
       try {
@@ -123,6 +133,13 @@ export default function SettingsPage() {
           if (data.azure_tenant_id) setAzureTenantId(data.azure_tenant_id);
           if (data.azure_client_id) setAzureClientId(data.azure_client_id);
           if (data.azure_vault_url) setAzureVaultUrl(data.azure_vault_url);
+          setGoogleEnabled(data.oauth_google_enabled === "true" || data.oauth_google_enabled === true);
+          if (data.oauth_google_client_id) setGoogleClientId(data.oauth_google_client_id);
+          if (data.oauth_google_client_secret) setGoogleClientSecret(data.oauth_google_client_secret);
+          setMicrosoftEnabled(data.oauth_microsoft_enabled === "true" || data.oauth_microsoft_enabled === true);
+          if (data.oauth_microsoft_client_id) setMicrosoftClientId(data.oauth_microsoft_client_id);
+          if (data.oauth_microsoft_client_secret) setMicrosoftClientSecret(data.oauth_microsoft_client_secret);
+          if (data.oauth_microsoft_tenant_id) setMicrosoftTenantId(data.oauth_microsoft_tenant_id);
         }
       } catch {
         // ignore
@@ -247,6 +264,7 @@ export default function SettingsPage() {
     { value: "branding", label: "Branding", icon: Palette },
     { value: "users", label: "Users", icon: Users },
     { value: "azure", label: "Azure KV", icon: KeyRound },
+    { value: "oauth", label: "OAuth", icon: ShieldCheck },
   ];
 
   return (
@@ -1167,6 +1185,178 @@ export default function SettingsPage() {
                   {testResult.message}
                 </p>
               )}
+            </div>
+          </div>
+        </Tabs.Content>
+        {/* OAuth Providers Tab */}
+        <Tabs.Content value="oauth" className="mt-6 space-y-6">
+          {/* Google OAuth */}
+          <div className={cardClass}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Google OAuth
+                </h3>
+                <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                  Allow users to sign in with their Google account.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="google-enabled"
+                  checked={googleEnabled}
+                  onChange={(e) => setGoogleEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label
+                  htmlFor="google-enabled"
+                  className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Enabled
+                </label>
+              </div>
+            </div>
+            <div className={cn(sectionClass, "mt-4")}>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass}>Client ID</label>
+                  <input
+                    type="text"
+                    value={googleClientId}
+                    onChange={(e) => setGoogleClientId(e.target.value)}
+                    placeholder="123456789-abc.apps.googleusercontent.com"
+                    className={cn(inputClass, "mt-1")}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Client Secret</label>
+                  <input
+                    type="password"
+                    value={googleClientSecret}
+                    onChange={(e) => setGoogleClientSecret(e.target.value)}
+                    placeholder="GOCSPX-..."
+                    className={cn(inputClass, "mt-1")}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                Set <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">GOOGLE_CLIENT_ID</code> and{" "}
+                <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">GOOGLE_CLIENT_SECRET</code> env vars and restart
+                the server to activate. Credentials stored here are saved for reference.
+              </p>
+              <div className="pt-2">
+                <button
+                  onClick={() =>
+                    saveSettings("oauth", {
+                      google_enabled: googleEnabled,
+                      google_client_id: googleClientId,
+                      google_client_secret: googleClientSecret,
+                      microsoft_enabled: microsoftEnabled,
+                      microsoft_client_id: microsoftClientId,
+                      microsoft_client_secret: microsoftClientSecret,
+                      microsoft_tenant_id: microsoftTenantId,
+                    })
+                  }
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Microsoft OAuth */}
+          <div className={cardClass}>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Microsoft OAuth
+                </h3>
+                <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
+                  Allow users to sign in with their Microsoft / Azure AD account.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="microsoft-enabled"
+                  checked={microsoftEnabled}
+                  onChange={(e) => setMicrosoftEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <label
+                  htmlFor="microsoft-enabled"
+                  className="text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Enabled
+                </label>
+              </div>
+            </div>
+            <div className={cn(sectionClass, "mt-4")}>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass}>Client ID</label>
+                  <input
+                    type="text"
+                    value={microsoftClientId}
+                    onChange={(e) => setMicrosoftClientId(e.target.value)}
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    className={cn(inputClass, "mt-1")}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Client Secret</label>
+                  <input
+                    type="password"
+                    value={microsoftClientSecret}
+                    onChange={(e) => setMicrosoftClientSecret(e.target.value)}
+                    placeholder="..."
+                    className={cn(inputClass, "mt-1")}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className={labelClass}>Tenant ID</label>
+                <input
+                  type="text"
+                  value={microsoftTenantId}
+                  onChange={(e) => setMicrosoftTenantId(e.target.value)}
+                  placeholder="common"
+                  className={cn(inputClass, "mt-1 max-w-md")}
+                />
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                  Use <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">common</code> for multi-tenant or enter your specific tenant UUID.
+                </p>
+              </div>
+              <p className="text-xs text-gray-400 dark:text-gray-500">
+                Set <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">AZURE_AD_CLIENT_ID</code>,{" "}
+                <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">AZURE_AD_CLIENT_SECRET</code>, and{" "}
+                <code className="rounded bg-gray-100 px-1 dark:bg-gray-800">AZURE_AD_TENANT_ID</code> env vars and restart
+                the server to activate. Credentials stored here are saved for reference.
+              </p>
+              <div className="pt-2">
+                <button
+                  onClick={() =>
+                    saveSettings("oauth", {
+                      google_enabled: googleEnabled,
+                      google_client_id: googleClientId,
+                      google_client_secret: googleClientSecret,
+                      microsoft_enabled: microsoftEnabled,
+                      microsoft_client_id: microsoftClientId,
+                      microsoft_client_secret: microsoftClientSecret,
+                      microsoft_tenant_id: microsoftTenantId,
+                    })
+                  }
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  {saving ? "Saving..." : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </Tabs.Content>

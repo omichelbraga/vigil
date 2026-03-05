@@ -138,6 +138,16 @@ async function POST_handler(req: NextRequest) {
         await upsertAppConfig("azure_kv_vault", String(data.vault_url ?? ""));
         break;
 
+      case "oauth":
+        await upsertAppConfig("oauth_google_enabled", String(data.google_enabled === true));
+        await upsertAppConfig("oauth_google_client_id", String(data.google_client_id ?? ""));
+        await upsertAppConfig("oauth_google_client_secret", String(data.google_client_secret ?? ""));
+        await upsertAppConfig("oauth_microsoft_enabled", String(data.microsoft_enabled === true));
+        await upsertAppConfig("oauth_microsoft_client_id", String(data.microsoft_client_id ?? ""));
+        await upsertAppConfig("oauth_microsoft_client_secret", String(data.microsoft_client_secret ?? ""));
+        await upsertAppConfig("oauth_microsoft_tenant_id", String(data.microsoft_tenant_id ?? "common"));
+        break;
+
       default:
         return NextResponse.json({ error: `Unknown section: ${section}` }, { status: 400 });
     }

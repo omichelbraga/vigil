@@ -23,6 +23,19 @@ export const auth = betterAuth({
     generateId: false,
   },
   plugins: [twoFactor()],
+  // TODO(oauth-db-runtime): Better Auth initializes at module load time (singleton),
+  // so social providers cannot be swapped in dynamically at runtime from DB settings.
+  // Current approach: credentials are configured via environment variables
+  // (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, AZURE_AD_CLIENT_ID, AZURE_AD_CLIENT_SECRET,
+  //  AZURE_AD_TENANT_ID) and the server must be restarted after changes.
+  //
+  // The Settings UI (Settings → OAuth tab) stores credentials and enabled flags in
+  // app_config for reference/documentation. The login page reads the enabled flags
+  // from /api/settings/oauth to conditionally show the OAuth buttons.
+  //
+  // To fully wire up DB-based credentials at runtime, you would need to either:
+  //   a) Run Better Auth as a dynamic factory (reinitialize on config change), or
+  //   b) Use a proxy OAuth handler that reads DB creds per-request before delegating.
   socialProviders: {
     ...(process.env.AZURE_AD_CLIENT_ID && process.env.AZURE_AD_CLIENT_SECRET
       ? {
