@@ -283,7 +283,6 @@ export default function SettingsPage() {
     { value: "notifications", label: "Notifications", icon: Bell },
     { value: "branding", label: "Branding", icon: Palette },
     { value: "users", label: "Users", icon: Users },
-    { value: "azure", label: "Azure KV", icon: KeyRound },
     { value: "oauth", label: "OAuth", icon: ShieldCheck },
   ];
 
@@ -759,9 +758,10 @@ export default function SettingsPage() {
 
           {/* Twilio */}
           <div className={cardClass}>
-            <h3 className="text-base font-semibold text-gray-900 dark:text-white">
-              Twilio (SMS)
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">Twilio (SMS)</h3>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-950 dark:text-amber-400">Auth token needs regeneration in Twilio console</span>
+            </div>
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <div>
                 <label className={labelClass}>Account SID</label>
