@@ -8,6 +8,7 @@ const PUBLIC_PATHS = [
   "/api/enroll",
   "/api/setup",          // first-run setup endpoints (no session yet)
   "/api/settings/test",  // used by setup wizard before login
+  "/api/settings/oauth", // public — only exposes enabled flags, no secrets
   "/login",
   "/setup",
   "/_next",
