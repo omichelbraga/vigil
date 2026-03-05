@@ -64,6 +64,13 @@ export function setupWebSocket(server: HttpServer) {
       return;
     }
 
+    // Block pending agents from connecting
+    if (agentRecord.status === "pending") {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
     // Capture remote IP at upgrade time (before ws handshake)
     const remoteIp =
       (request.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
@@ -137,18 +144,18 @@ export function setupWebSocket(server: HttpServer) {
 
 async function verifyAgentToken(
   token: string
-): Promise<{ id: string; name: string } | null> {
+): Promise<{ id: string; name: string; status: string } | null> {
   // Get all active agents and try to verify against each hash
   // This is necessary because argon2 hashes include salt
   const agentRecords = await db.agent.findMany({
     where: { isActive: true },
-    select: { id: true, name: true, tokenHash: true },
+    select: { id: true, name: true, tokenHash: true, status: true },
   });
 
   for (const agent of agentRecords) {
     try {
       if (await argon2.verify(agent.tokenHash, token)) {
-        return { id: agent.id, name: agent.name };
+        return { id: agent.id, name: agent.name, status: agent.status };
       }
     } catch {
       // Invalid hash format, skip

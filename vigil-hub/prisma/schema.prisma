@@ -96,6 +96,8 @@ model Agent {
   os            String?
   hostname      String?
   ipAddress     String?  @map("ip_address")
+  status        String   @default("active")
+  enrolledAt    DateTime? @map("enrolled_at")
   isActive      Boolean  @default(true) @map("is_active")
   autoUpdate    Boolean  @default(false) @map("auto_update")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -284,4 +286,15 @@ model AppConfig {
   value String
 
   @@map("app_config")
+}
+
+model EnrollmentToken {
+  id        String    @id @default(uuid())
+  token     String    @unique
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  agentId   String?   @map("agent_id")
+  createdBy String?   @map("created_by")
+  createdAt DateTime  @default(now()) @map("created_at")
+  @@map("enrollment_tokens")
 }

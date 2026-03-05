@@ -5,6 +5,7 @@ const PUBLIC_PATHS = [
   "/api/health",
   "/api/auth",
   "/api/update",
+  "/api/enroll",
   "/api/setup",          // first-run setup endpoints (no session yet)
   "/api/settings/test",  // used by setup wizard before login
   "/login",

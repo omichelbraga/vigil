@@ -13,7 +13,6 @@ export async function GET(req: NextRequest) {
   }
 
   const agents = await db.agent.findMany({
-    where: { isActive: true },
     select: {
       id: true,
       name: true,
@@ -23,6 +22,7 @@ export async function GET(req: NextRequest) {
       hostname: true,
       ipAddress: true,
       isActive: true,
+      status: true,
       autoUpdate: true,
       createdAt: true,
       updatedAt: true,
@@ -35,8 +35,12 @@ export async function GET(req: NextRequest) {
   const agentsWithStatus = agents.map((a) => ({
     ...a,
     last_seen: a.lastSeen,   // snake_case alias for UI
+    ip_address: a.ipAddress,
+    check_count: a._count.checks,
     status:
-      a.lastSeen && now.getTime() - a.lastSeen.getTime() < 120_000
+      a.status === "pending"
+        ? "pending"
+        : a.lastSeen && now.getTime() - a.lastSeen.getTime() < 120_000
         ? "online"
         : "offline",
   }));
