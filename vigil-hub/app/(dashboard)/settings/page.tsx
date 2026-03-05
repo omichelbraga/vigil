@@ -47,6 +47,8 @@ export default function SettingsPage() {
   const [smtpUser, setSmtpUser] = useState("");
   const [smtpPass, setSmtpPass] = useState("");
   const [smtpFrom, setSmtpFrom] = useState("");
+  const [smtpAlertTo, setSmtpAlertTo] = useState("");
+  const [smtpEnabled, setSmtpEnabled] = useState(false);
 
   // Notifications
   const [slackWebhook, setSlackWebhook] = useState("");
@@ -96,6 +98,8 @@ export default function SettingsPage() {
           if (data.smtp_auth !== undefined) setSmtpAuth(data.smtp_auth);
           if (data.smtp_user) setSmtpUser(data.smtp_user);
           if (data.smtp_from) setSmtpFrom(data.smtp_from);
+          if (data.smtp_alert_to) setSmtpAlertTo(data.smtp_alert_to);
+          if (data.smtp_enabled !== undefined) setSmtpEnabled(data.smtp_enabled);
           if (data.slack_webhook) setSlackWebhook(data.slack_webhook);
           if (data.slack_custom_payload) setSlackCustomPayload(data.slack_custom_payload);
           if (data.teams_webhook) setTeamsWebhook(data.teams_webhook);
@@ -214,7 +218,7 @@ export default function SettingsPage() {
   const cardClass =
     "rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900";
 
-  const PAYLOAD_VARS = "Available variables: {{title}} {{body}} {{checkName}} {{agentName}} {{status}} {{timestamp}}";
+  const PAYLOAD_VARS = "Variables: {{title}} {{body}} {{checkName}} {{agentName}} {{status}} {{type}} {{emoji}} {{statusEmoji}} {{color}} {{colorHex}} {{timestamp}}";
 
   const PayloadEditor = ({
     value, onChange, placeholder
@@ -413,6 +417,29 @@ export default function SettingsPage() {
                   className={cn(inputClass, "mt-1 max-w-md")}
                 />
               </div>
+              <div>
+                <label className={labelClass}>Alert Recipients</label>
+                <input
+                  type="text"
+                  value={smtpAlertTo}
+                  onChange={(e) => setSmtpAlertTo(e.target.value)}
+                  placeholder="admin@example.com, oncall@example.com"
+                  className={cn(inputClass, "mt-1 max-w-md")}
+                />
+                <p className="mt-1 text-xs text-gray-400">Comma-separated. These addresses receive alert emails when a check fires.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="smtp-enabled"
+                  checked={smtpEnabled}
+                  onChange={(e) => setSmtpEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-emerald-600"
+                />
+                <label htmlFor="smtp-enabled" className="text-sm text-gray-700 dark:text-gray-300">
+                  Enable email alerts (send alert emails when checks fire)
+                </label>
+              </div>
               <div className="flex gap-3 pt-2">
                 <button
                   onClick={() =>
@@ -423,6 +450,8 @@ export default function SettingsPage() {
                       smtp_user: smtpUser,
                       smtp_pass: smtpPass,
                       smtp_from: smtpFrom,
+                      smtp_alert_to: smtpAlertTo,
+                      smtp_enabled: smtpEnabled,
                     })
                   }
                   disabled={saving}

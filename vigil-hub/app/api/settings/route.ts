@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
     smtp_port: smtpChannel ? (smtpChannel.config as Record<string, unknown>)?.port ?? 25 : 25,
     smtp_user: smtpChannel ? (smtpChannel.config as Record<string, unknown>)?.user ?? "" : "",
     smtp_from: smtpChannel ? (smtpChannel.config as Record<string, unknown>)?.from ?? "" : "",
+    smtp_alert_to: smtpChannel ? (smtpChannel.config as Record<string, unknown>)?.alert_to ?? "" : "",
+    smtp_enabled: smtpChannel ? smtpChannel.enabled : false,
     slack_webhook: slackChannel ? (slackChannel.config as Record<string, unknown>)?.url ?? "" : "",
     slack_custom_payload: slackChannel ? (slackChannel.config as Record<string, unknown>)?.custom_payload ?? "" : "",
     teams_webhook: teamsChannel ? (teamsChannel.config as Record<string, unknown>)?.url ?? "" : "",
@@ -86,16 +88,31 @@ async function POST_handler(req: NextRequest) {
         });
         break;
 
-      case "smtp":
-        await upsertChannel("smtp-default", "Email (SMTP)", "smtp", {
-          host: data.smtp_host,
-          port: data.smtp_port ?? 25,
-          user: data.smtp_user ?? "",
-          pass: data.smtp_pass ?? "",
-          from: data.smtp_from ?? "",
-          secure: data.smtp_port === 465,
+      case "smtp": {
+        const smtpEnabled = data.smtp_enabled === true;
+        await db.alertChannel.upsert({
+          where: { id: "smtp-default" },
+          update: {
+            name: "Email (SMTP)", type: "smtp", enabled: smtpEnabled,
+            config: {
+              host: data.smtp_host, port: data.smtp_port ?? 25,
+              user: data.smtp_user ?? "", pass: data.smtp_pass ?? "",
+              from: data.smtp_from ?? "", alert_to: data.smtp_alert_to ?? "",
+              secure: data.smtp_port === 465,
+            },
+          },
+          create: {
+            id: "smtp-default", name: "Email (SMTP)", type: "smtp", enabled: smtpEnabled,
+            config: {
+              host: data.smtp_host, port: data.smtp_port ?? 25,
+              user: data.smtp_user ?? "", pass: data.smtp_pass ?? "",
+              from: data.smtp_from ?? "", alert_to: data.smtp_alert_to ?? "",
+              secure: data.smtp_port === 465,
+            },
+          },
         });
         break;
+      }
 
       case "notifications":
         if (data.slack_webhook) await upsertChannel("slack-default", "Slack", "slack", { url: data.slack_webhook, custom_payload: data.slack_custom_payload ?? "" });

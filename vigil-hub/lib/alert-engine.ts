@@ -85,6 +85,12 @@ interface Notification {
 }
 
 function renderTemplate(template: string, n: Notification): string {
+  const isRecovery = n.type === "recovery";
+  const emoji = isRecovery ? "✅" : "🚨";
+  const color = isRecovery ? "5763719" : "16729344";   // Discord int: green / orange-red
+  const colorHex = isRecovery ? "#57F287" : "#FF6B00"; // hex for other uses
+  const statusEmoji = isRecovery ? "🟢" : "🔴";
+
   return template
     .replace(/\{\{title\}\}/g, n.title)
     .replace(/\{\{body\}\}/g, n.body)
@@ -92,7 +98,11 @@ function renderTemplate(template: string, n: Notification): string {
     .replace(/\{\{agentName\}\}/g, n.agentName)
     .replace(/\{\{status\}\}/g, n.status)
     .replace(/\{\{type\}\}/g, n.type)
-    .replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+    .replace(/\{\{timestamp\}\}/g, new Date().toISOString())
+    .replace(/\{\{emoji\}\}/g, emoji)
+    .replace(/\{\{statusEmoji\}\}/g, statusEmoji)
+    .replace(/\{\{color\}\}/g, color)
+    .replace(/\{\{colorHex\}\}/g, colorHex);
 }
 
 function buildPayload(config: Record<string, unknown>, n: Notification, defaultPayload: unknown): unknown {
@@ -214,16 +224,33 @@ async function sendDiscord(webhookUrl: string, n: Notification, config: Record<s
   });
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 async function sendTelegram(token: string, chatId: string, n: Notification, config: Record<string, unknown>) {
   if (!token || !chatId) return;
   const customPayload = config.custom_payload as string | undefined;
+
+  // For Telegram: render template but HTML-escape all variable values
+  const safe = {
+    ...n,
+    title: escapeHtml(n.title),
+    body: escapeHtml(n.body),
+    agentName: escapeHtml(n.agentName),
+    checkName: escapeHtml(n.checkName),
+    status: escapeHtml(n.status),
+  };
+
+  const isRecovery = n.type === "recovery";
   const text = customPayload?.trim()
-    ? renderTemplate(customPayload, n)
-    : `${n.title}\n\n${n.body}\n\nAgent: ${n.agentName}\nCheck: ${n.checkName}`;
+    ? renderTemplate(customPayload, { ...safe, type: n.type })
+    : `${isRecovery ? "✅" : "🚨"} <b>${safe.title}</b>\n\n${safe.body}\n\n🖥 <b>Agent:</b> ${safe.agentName}\n🔍 <b>Check:</b> ${safe.checkName}\n${isRecovery ? "🟢" : "🔴"} <b>Status:</b> ${safe.status}`;
+
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
   });
 }
 
@@ -238,7 +265,6 @@ async function sendWebhook(url: string, n: Notification, config: Record<string, 
 }
 
 async function sendSmtpAlert(config: Record<string, unknown>, n: Notification) {
-  // Lazy import to avoid loading nodemailer on every request
   const nodemailer = await import("nodemailer");
   const host = config.host as string;
   if (!host) return;
@@ -253,12 +279,83 @@ async function sendSmtpAlert(config: Record<string, unknown>, n: Notification) {
 
   const from = (config.from as string) || `vigil@${host}`;
   const to = (config.alert_to as string) || from;
+  const isRecovery = n.type === "recovery";
+  const accentColor = isRecovery ? "#22c55e" : "#ef4444";
+  const badgeColor  = isRecovery ? "#dcfce7" : "#fee2e2";
+  const badgeText   = isRecovery ? "#166534" : "#991b1b";
+  const emoji       = isRecovery ? "✅" : "🚨";
+  const statusLabel = n.status.toUpperCase();
+  const now         = new Date().toLocaleString("en-US", { timeZone: "America/Chicago", dateStyle: "full", timeStyle: "short" });
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${n.title}</title></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+        <!-- Header bar -->
+        <tr><td style="background:${accentColor};padding:4px 0;"></td></tr>
+
+        <!-- Logo / Brand -->
+        <tr><td style="padding:32px 40px 0;border-bottom:1px solid #f1f5f9;">
+          <table width="100%"><tr>
+            <td><span style="font-size:22px;font-weight:800;color:#0f172a;letter-spacing:-0.5px;">⚡ Vigil</span>
+            <span style="font-size:13px;color:#94a3b8;margin-left:8px;">Monitor</span></td>
+            <td align="right"><span style="display:inline-block;background:${badgeColor};color:${badgeText};font-size:12px;font-weight:700;padding:4px 12px;border-radius:999px;letter-spacing:0.5px;">${statusLabel}</span></td>
+          </tr></table>
+        </td></tr>
+
+        <!-- Alert body -->
+        <tr><td style="padding:32px 40px;">
+          <p style="margin:0 0 8px;font-size:26px;">${emoji}</p>
+          <h1 style="margin:0 0 12px;font-size:22px;font-weight:700;color:#0f172a;line-height:1.3;">${n.title}</h1>
+          <p style="margin:0 0 28px;font-size:15px;color:#475569;line-height:1.6;">${n.body}</p>
+
+          <!-- Details card -->
+          <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;">
+            <tr style="border-bottom:1px solid #e2e8f0;">
+              <td style="padding:14px 20px;font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;width:120px;">Agent</td>
+              <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#0f172a;">${n.agentName}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #e2e8f0;">
+              <td style="padding:14px 20px;font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Check</td>
+              <td style="padding:14px 20px;font-size:14px;font-weight:600;color:#0f172a;">${n.checkName}</td>
+            </tr>
+            <tr style="border-bottom:1px solid #e2e8f0;">
+              <td style="padding:14px 20px;font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Status</td>
+              <td style="padding:14px 20px;font-size:14px;font-weight:600;color:${accentColor};">${statusLabel}</td>
+            </tr>
+            <tr>
+              <td style="padding:14px 20px;font-size:12px;font-weight:600;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px;">Time</td>
+              <td style="padding:14px 20px;font-size:14px;color:#0f172a;">${now}</td>
+            </tr>
+          </table>
+
+          <!-- CTA -->
+          <div style="margin-top:28px;text-align:center;">
+            <a href="http://192.168.9.113:3000" style="display:inline-block;background:${accentColor};color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px;">View in Vigil →</a>
+          </div>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:20px 40px;background:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;">
+          <p style="margin:0;font-size:12px;color:#94a3b8;">⚡ Vigil Monitor &nbsp;•&nbsp; Automated alert &nbsp;•&nbsp; Do not reply</p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
 
   await transporter.sendMail({
     from,
     to,
-    subject: n.title,
-    text: `${n.title}\n\n${n.body}\n\nAgent: ${n.agentName}\nCheck: ${n.checkName}\nTime: ${new Date().toISOString()}`,
+    subject: `${emoji} ${n.title}`,
+    text: `${n.title}\n\n${n.body}\n\nAgent: ${n.agentName}\nCheck: ${n.checkName}\nStatus: ${statusLabel}\nTime: ${now}`,
+    html,
   });
 }
 
