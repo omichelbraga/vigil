@@ -1,6 +1,8 @@
 mod buffer;
 mod config;
+mod enroll;
 mod hub_client;
+mod installer;
 mod monitors;
 mod updater;
 
@@ -35,6 +37,10 @@ struct Cli {
     /// Path to configuration file
     #[arg(long, default_value = "config.toml")]
     config: String,
+
+    /// Enrollment token — register this machine with the Hub (one-time setup)
+    #[arg(long, env = "VIGIL_ENROLL_TOKEN")]
+    enroll: Option<String>,
 }
 
 #[tokio::main]
@@ -46,6 +52,43 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Enrollment flow — one-time setup
+    if let Some(ref enrollment_token) = cli.enroll {
+        let hub_url = cli.hub_url.as_deref().unwrap_or("http://localhost:3000");
+        println!("🔗 Enrolling with Hub at {}...", hub_url);
+
+        match enroll::enroll(hub_url, enrollment_token).await {
+            Ok((agent_id, token)) => {
+                let hostname = sysinfo::System::host_name()
+                    .unwrap_or_else(|| "vigil-agent".to_string());
+                let config_path = &cli.config;
+
+                println!("✅ Enrollment successful — Agent ID: {}", agent_id);
+                println!("⏳ Waiting for admin approval in the Hub portal...");
+                println!("   Dashboard: {}", hub_url.replace("wss://", "https://").replace("ws://", "http://"));
+
+                installer::write_config(hub_url, &token, &hostname, config_path)?;
+
+                let exe_path = std::env::current_exe()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("vigil-agent"))
+                    .to_string_lossy()
+                    .to_string();
+
+                if let Err(e) = installer::install_service(&exe_path, config_path) {
+                    eprintln!("⚠️  Service install skipped: {}", e);
+                }
+
+                println!("");
+                println!("🎉 Done! Approve this agent in the Hub portal to start monitoring.");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("❌ Enrollment failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     let mut cfg = config::Config::load(&cli.config).unwrap_or_else(|e| {
         warn!("Could not load config file '{}': {e}. Using defaults.", cli.config);
