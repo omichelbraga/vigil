@@ -6,13 +6,15 @@ import { cn } from "@/lib/utils";
 
 interface AlertRecord {
   id: string;
-  check_name?: string;
-  agent_name?: string;
+  ruleId: string;
+  checkId?: string;
+  agentId?: string;
   status: string;
   channel?: string;
   delivered?: boolean;
-  created_at: string;
+  firedAt: string;
   message?: string;
+  rule?: { name: string };
 }
 
 export default function AlertsPage() {
@@ -57,12 +59,12 @@ export default function AlertsPage() {
       "Message",
     ];
     const rows = filteredAlerts.map((a) => [
-      a.check_name || "",
-      a.agent_name || "",
+      a.rule?.name || "",
+      a.agentId || "",
       a.status,
       a.channel || "",
       a.delivered ? "Yes" : "No",
-      a.created_at,
+      a.firedAt,
       a.message || "",
     ]);
 
@@ -104,7 +106,7 @@ export default function AlertsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:flex-nowrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             Alerts
@@ -158,6 +160,7 @@ export default function AlertsPage() {
       {/* Alerts Table */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
         {filteredAlerts.length > 0 ? (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/50">
@@ -188,10 +191,10 @@ export default function AlertsPage() {
                   className="hover:bg-gray-50 dark:hover:bg-gray-800/50"
                 >
                   <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">
-                    {alert.check_name || "—"}
+                    {alert.rule?.name || "—"}
                   </td>
                   <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                    {alert.agent_name || "—"}
+                    {alert.agentId || "—"}
                   </td>
                   <td className="px-4 py-3">
                     <span
@@ -223,14 +226,15 @@ export default function AlertsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                    <span title={alert.created_at}>
-                      {timeAgo(alert.created_at)}
+                    <span title={alert.firedAt}>
+                      {timeAgo(alert.firedAt)}
                     </span>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         ) : (
           <div className="p-12 text-center">
             <Bell className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />

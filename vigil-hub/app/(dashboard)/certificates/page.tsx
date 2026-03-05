@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { Plus, Shield, Activity, Download } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,27 @@ export default function CertificatesPage() {
   const [formDomain, setFormDomain] = useState("");
   const [formPort, setFormPort] = useState("443");
   const [creating, setCreating] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const formatDate = (d?: string) => {
+    if (!d || !mounted) return "—";
+    return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Remove this certificate monitor?")) return;
+    await fetch(`/api/certs/${id}`, { method: "DELETE" });
+    fetchCerts();
+  };
+
+  const handleCheckNow = async () => {
+    setChecking(true);
+    await fetch("/api/certs/check", { method: "POST" });
+    await fetchCerts();
+    setChecking(false);
+  };
 
   const fetchCerts = async () => {
     try {
@@ -106,7 +127,7 @@ export default function CertificatesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:flex-nowrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             Certificates
@@ -115,7 +136,15 @@ export default function CertificatesPage() {
             Track SSL/TLS certificate expiration across your domains
           </p>
         </div>
-        <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
+        <div className="flex gap-2">
+          <button
+            onClick={handleCheckNow}
+            disabled={checking}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800 transition-colors"
+          >
+            {checking ? "Checking..." : "🔄 Check Now"}
+          </button>
+          <Dialog.Root open={dialogOpen} onOpenChange={setDialogOpen}>
           <Dialog.Trigger asChild>
             <button className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 transition-colors">
               <Plus className="h-4 w-4" />
@@ -175,11 +204,13 @@ export default function CertificatesPage() {
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
+        </div>
       </div>
 
       {/* Certificates Table */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
         {standardCerts.length > 0 ? (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/50">
@@ -198,6 +229,10 @@ export default function CertificatesPage() {
                 <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
                   Status
                 </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
+                  Issuer
+                </th>
+                <th className="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
@@ -215,9 +250,7 @@ export default function CertificatesPage() {
                       {cert.port || 443}
                     </td>
                     <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                      {cert.expiry_date
-                        ? new Date(cert.expiry_date).toLocaleDateString()
-                        : "—"}
+                      {formatDate(cert.expiry_date)}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -247,11 +280,23 @@ export default function CertificatesPage() {
                         {st.label}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-xs text-gray-400">
+                      {cert.issuer || "—"}
+                    </td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => handleDelete(cert.id)}
+                        className="text-xs text-red-500 hover:text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+          </div>
         ) : (
           <div className="p-12 text-center">
             <Shield className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />
@@ -272,6 +317,7 @@ export default function CertificatesPage() {
             Azure Key Vault Certificates
           </h2>
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/50">
@@ -301,9 +347,7 @@ export default function CertificatesPage() {
                         {cert.domain}
                       </td>
                       <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                        {cert.expiry_date
-                          ? new Date(cert.expiry_date).toLocaleDateString()
-                          : "—"}
+                        {formatDate(cert.expiry_date)}
                       </td>
                       <td className="px-4 py-3">
                         <span
@@ -338,6 +382,7 @@ export default function CertificatesPage() {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         </div>
       )}

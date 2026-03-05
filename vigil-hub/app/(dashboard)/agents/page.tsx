@@ -119,7 +119,7 @@ export default function AgentsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:flex-nowrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
             Agents
@@ -228,6 +228,7 @@ export default function AgentsPage() {
       {/* Agent Table */}
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
         {agents.length > 0 ? (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/50">
@@ -326,6 +327,7 @@ export default function AgentsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         ) : (
           <div className="p-12 text-center">
             <Server className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600" />

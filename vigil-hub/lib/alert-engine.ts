@@ -85,7 +85,7 @@ interface Notification {
 }
 
 function renderTemplate(template: string, n: Notification): string {
-  const isRecovery = n.type === "recovery";
+  const isRecovery = n.type === "resolved";
   const emoji = isRecovery ? "✅" : "🚨";
   const color = isRecovery ? "5763719" : "16729344";   // Discord int: green / orange-red
   const colorHex = isRecovery ? "#57F287" : "#FF6B00"; // hex for other uses
@@ -242,7 +242,7 @@ async function sendTelegram(token: string, chatId: string, n: Notification, conf
     status: escapeHtml(n.status),
   };
 
-  const isRecovery = n.type === "recovery";
+  const isRecovery = n.type === "resolved";
   const text = customPayload?.trim()
     ? renderTemplate(customPayload, { ...safe, type: n.type })
     : `${isRecovery ? "✅" : "🚨"} <b>${safe.title}</b>\n\n${safe.body}\n\n🖥 <b>Agent:</b> ${safe.agentName}\n🔍 <b>Check:</b> ${safe.checkName}\n${isRecovery ? "🟢" : "🔴"} <b>Status:</b> ${safe.status}`;
@@ -279,7 +279,7 @@ async function sendSmtpAlert(config: Record<string, unknown>, n: Notification) {
 
   const from = (config.from as string) || `vigil@${host}`;
   const to = (config.alert_to as string) || from;
-  const isRecovery = n.type === "recovery";
+  const isRecovery = n.type === "resolved";
   const accentColor = isRecovery ? "#22c55e" : "#ef4444";
   const badgeColor  = isRecovery ? "#dcfce7" : "#fee2e2";
   const badgeText   = isRecovery ? "#166534" : "#991b1b";

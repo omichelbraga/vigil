@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { checkDomain } from "@/lib/cert-monitor";
 
 
 
@@ -12,22 +13,28 @@ export async function GET(req: NextRequest) {
 
   const certs = await db.certMonitor.findMany({
     orderBy: { createdAt: "desc" },
-    select: {
-      id: true,
-      host: true,
-      port: true,
-      warnDays: true,
-      enabled: true,
-      lastChecked: true,
-      expiresAt: true,
-      issuer: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
-    },
   });
 
-  return NextResponse.json(certs);
+  const now = new Date();
+  const mapped = certs.map((c) => {
+    const daysRemaining = c.expiresAt
+      ? Math.floor((c.expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      : undefined;
+    return {
+      id: c.id,
+      domain: c.host,
+      port: c.port,
+      warn_days: c.warnDays,
+      enabled: c.enabled,
+      last_checked: c.lastChecked,
+      expiry_date: c.expiresAt,
+      days_remaining: daysRemaining,
+      issuer: c.issuer,
+      status: c.status || "unknown",
+    };
+  });
+
+  return NextResponse.json(mapped);
 }
 
 export async function POST(req: NextRequest) {
@@ -104,6 +111,26 @@ export async function POST(req: NextRequest) {
       status: true,
       createdAt: true,
     },
+  });
+
+  // Immediately check the cert in the background
+  setImmediate(async () => {
+    try {
+      const info = await checkDomain(host, port);
+      const now = new Date();
+      const daysUntilExpiry = Math.floor((info.validTo.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      const status = daysUntilExpiry <= 0 ? "expired" : daysUntilExpiry <= (cert.warnDays ?? 30) ? "expiring" : "valid";
+      await db.certMonitor.update({
+        where: { id: cert.id },
+        data: { lastChecked: now, expiresAt: info.validTo, issuer: info.issuer, status },
+      });
+    } catch (err) {
+      await db.certMonitor.update({
+        where: { id: cert.id },
+        data: { lastChecked: new Date(), status: "error" },
+      });
+      console.error(`Initial cert check failed for ${host}:`, err);
+    }
   });
 
   return NextResponse.json(cert, { status: 201 });

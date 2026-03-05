@@ -26,13 +26,15 @@ interface Agent {
 
 interface AlertRecord {
   id: string;
-  check_name?: string;
-  agent_name?: string;
+  ruleId: string;
+  checkId?: string;
+  agentId?: string;
   status: string;
   channel?: string;
   delivered?: boolean;
-  created_at: string;
+  firedAt: string;
   message?: string;
+  rule?: { name: string };
 }
 
 interface CertRecord {
@@ -270,7 +272,8 @@ export default function DashboardPage() {
         </h2>
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900">
           {alerts.length > 0 ? (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto">
+          <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/50">
                   <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
@@ -294,10 +297,10 @@ export default function DashboardPage() {
                 {alerts.map((alert) => (
                   <tr key={alert.id}>
                     <td className="px-4 py-3 text-gray-900 dark:text-white">
-                      {alert.check_name || "—"}
+                      {alert.rule?.name || "—"}
                     </td>
                     <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                      {alert.agent_name || "—"}
+                      {alert.agentId || "—"}
                     </td>
                     <td className="px-4 py-3">
                       <span
@@ -317,12 +320,13 @@ export default function DashboardPage() {
                       {alert.channel || "—"}
                     </td>
                     <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
-                      {timeAgo(alert.created_at)}
+                      {timeAgo(alert.firedAt)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
           ) : (
             <div className="p-8 text-center text-sm text-gray-500 dark:text-gray-400">
               No alerts yet. Alerts will appear here when checks fail.

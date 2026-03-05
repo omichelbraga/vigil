@@ -1013,6 +1013,7 @@ export default function SettingsPage() {
             </div>
             <div className="mt-4">
               {users.length > 0 ? (
+                <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-200 dark:border-gray-700">
@@ -1069,6 +1070,7 @@ export default function SettingsPage() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               ) : (
                 <p className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
                   No users found.
