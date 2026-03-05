@@ -7,6 +7,7 @@ interface CheckContext {
   agentName: string;
   status: string;
   message?: string | null;
+  skipRecovery?: boolean; // If true, no notification sent when check resolves to OK
 }
 
 /**
@@ -15,7 +16,7 @@ interface CheckContext {
  * No rules required — works out of the box.
  */
 export async function processAlert(ctx: CheckContext) {
-  const { checkId, checkName, agentId, agentName, status, message } = ctx;
+  const { checkId, checkName, agentId, agentName, status, message, skipRecovery } = ctx;
 
   // Find open incident for this check
   const openIncident = await db.alertHistory.findFirst({
@@ -41,7 +42,7 @@ export async function processAlert(ctx: CheckContext) {
     try {
       await sendNotification({
         type: "alert",
-        title: `${checkName} is ${status.toUpperCase()}`,
+        title: `${checkName} is ${status.charAt(0).toUpperCase() + status.slice(1)}`,
         body: message || `${checkName} on agent ${agentName} is ${status}`,
         agentName,
         checkName,
@@ -64,14 +65,17 @@ export async function processAlert(ctx: CheckContext) {
       data: { status: "resolved", resolvedAt: new Date() },
     });
 
-    await sendNotification({
-      type: "resolved",
-      title: `${checkName} recovered`,
-      body: `${checkName} on agent ${agentName} is back to normal.`,
-      agentName,
-      checkName,
-      status,
-    });
+    // Only send recovery notification if not suppressed (e.g. cert monitors)
+    if (!skipRecovery) {
+      await sendNotification({
+        type: "resolved",
+        title: `${checkName} recovered`,
+        body: `${checkName} on agent ${agentName} is back to normal.`,
+        agentName,
+        checkName,
+        status,
+      });
+    }
   }
 }
 

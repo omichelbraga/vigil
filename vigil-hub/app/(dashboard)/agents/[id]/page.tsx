@@ -20,6 +20,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { cn } from "@/lib/utils";
+import { statusLabel, statusColor } from "@/lib/status";
 
 interface Agent {
   id: string;
@@ -173,7 +174,7 @@ export default function AgentDetailPage() {
                         : "bg-gray-400"
                     )}
                   />
-                  {agent.status}
+                  {statusLabel(agent.status)}
                 </span>
               </div>
               <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -309,7 +310,7 @@ export default function AgentDetailPage() {
                           : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
                       )}
                     >
-                      {check.status}
+                      {statusLabel(check.status)}
                     </span>
                   </td>
                   <td className="px-6 py-3 text-gray-500 dark:text-gray-400">
@@ -371,7 +372,7 @@ export default function AgentDetailPage() {
                           : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
                       )}
                     >
-                      {result.status}
+                      {statusLabel(result.status)}
                     </span>
                   </td>
                   <td className="px-6 py-3 text-gray-500 dark:text-gray-400">

@@ -6,6 +6,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast-provider";
+import { statusLabel, statusColor } from "@/lib/status";
 
 interface CheckRecord {
   id: string;
@@ -502,19 +503,8 @@ export default function ChecksPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
-                        check.status === "ok"
-                          ? "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400"
-                          : check.status === "warning"
-                          ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
-                          : check.status === "critical"
-                          ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
-                          : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400"
-                      )}
-                    >
-                      {check.status}
+                    <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", statusColor(check.status))}>
+                      {statusLabel(check.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500 dark:text-gray-400">

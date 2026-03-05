@@ -298,3 +298,18 @@ model EnrollmentToken {
   createdAt DateTime  @default(now()) @map("created_at")
   @@map("enrollment_tokens")
 }
+
+model ExpiryMonitor {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  expiresAt   DateTime  @map("expires_at")
+  warnDays    Int       @default(30) @map("warn_days")
+  category    String    @default("other") // "azure_secret", "saml_cert", "other"
+  lastStatus  String    @default("unknown") @map("last_status")
+  lastChecked DateTime? @map("last_checked")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("expiry_monitors")
+}

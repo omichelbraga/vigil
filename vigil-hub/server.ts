@@ -3,6 +3,7 @@ import { parse } from "url";
 import next from "next";
 import { setupWebSocket } from "./lib/ws-server";
 import { runCertChecks } from "./lib/cert-monitor";
+import { runExpiryChecks } from "./lib/expiry-monitor";
 
 // Catch unhandled errors so they appear in /tmp/vigil-hub.log
 process.on("unhandledRejection", (reason) => {
@@ -31,6 +32,10 @@ app.prepare().then(() => {
   // Run cert checks on startup + every hour
   runCertChecks().catch(console.error);
   setInterval(() => runCertChecks().catch(console.error), 60 * 60 * 1000);
+
+  // Run expiry monitor checks on startup + every 6 hours
+  runExpiryChecks().catch(console.error);
+  setInterval(() => runExpiryChecks().catch(console.error), 6 * 60 * 60 * 1000);
 
   server.listen(port, hostname, () => {
     console.log(`> Vigil Hub ready on http://${hostname}:${port}`);

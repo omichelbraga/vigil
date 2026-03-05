@@ -1,5 +1,6 @@
 import * as tls from "tls";
 import { db } from "./db";
+import { processAlert } from "./alert-engine";
 
 interface CertInfo {
   subject: string;
@@ -79,18 +80,36 @@ export async function runCertChecks(): Promise<void> {
     where: { enabled: true },
   });
 
+  // Get or create a "hub" agent for cert alert attribution
+  let hubAgent = await db.agent.findFirst({ where: { name: "Vigil Hub" } });
+  if (!hubAgent) {
+    hubAgent = await db.agent.create({
+      data: { name: "Vigil Hub", token: "hub-internal", isActive: true },
+    });
+  }
+
   for (const monitor of monitors) {
     try {
       const info = await checkDomain(monitor.host, monitor.port);
 
-      let status: string;
+      // Normalize to standard alert statuses
+      let alertStatus: string;
+      let alertMessage: string;
       if (info.daysUntilExpiry <= 0) {
-        status = "expired";
+        alertStatus = "critical";
+        alertMessage = `Certificate for ${monitor.host} has EXPIRED (${Math.abs(info.daysUntilExpiry)} days ago)`;
       } else if (info.daysUntilExpiry <= monitor.warnDays) {
-        status = "expiring";
+        alertStatus = "warning";
+        alertMessage = `Certificate for ${monitor.host} expires in ${info.daysUntilExpiry} days (${info.validTo.toLocaleDateString()})`;
       } else {
-        status = "valid";
+        alertStatus = "ok";
+        alertMessage = `Certificate valid — ${info.daysUntilExpiry} days remaining`;
       }
+
+      // Store cert-friendly status labels
+      const displayStatus = alertStatus === "critical" ? "expired"
+        : alertStatus === "warning" ? "expiring"
+        : "valid";
 
       await db.certMonitor.update({
         where: { id: monitor.id },
@@ -98,17 +117,50 @@ export async function runCertChecks(): Promise<void> {
           lastChecked: new Date(),
           expiresAt: info.validTo,
           issuer: info.issuer,
-          status,
+          status: displayStatus,
         },
       });
+
+      // Fire alert for warning/critical only — no recovery notification for certs
+      if (alertStatus !== "ok") {
+        await processAlert({
+          checkId: monitor.id,
+          checkName: `${monitor.host}:${monitor.port} cert`,
+          agentId: hubAgent.id,
+          agentName: "Vigil Hub",
+          status: alertStatus,
+          message: alertMessage,
+          skipRecovery: true,
+        });
+      } else {
+        // Silently resolve any open incident without sending notification
+        const openIncident = await db.alertHistory.findFirst({
+          where: { checkId: monitor.id, status: "fired" },
+        });
+        if (openIncident) {
+          await db.alertHistory.update({
+            where: { id: openIncident.id },
+            data: { status: "resolved", resolvedAt: new Date() },
+          });
+        }
+      }
+
     } catch (err) {
       await db.certMonitor.update({
         where: { id: monitor.id },
-        data: {
-          lastChecked: new Date(),
-          status: "error",
-        },
+        data: { lastChecked: new Date(), status: "error" },
       });
+      if (hubAgent) {
+        await processAlert({
+          checkId: monitor.id,
+          checkName: `${monitor.host}:${monitor.port} cert`,
+          agentId: hubAgent.id,
+          agentName: "Vigil Hub",
+          status: "critical",
+          message: `Certificate check failed for ${monitor.host}: ${err}`,
+          skipRecovery: true,
+        });
+      }
       console.error(`Cert check failed for ${monitor.host}:`, err);
     }
   }

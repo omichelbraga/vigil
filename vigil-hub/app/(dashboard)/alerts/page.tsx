@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Download, Activity, Bell, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { statusLabel, statusColor } from "@/lib/status";
 
 interface AlertRecord {
   id: string;
@@ -198,16 +199,9 @@ export default function AlertsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span
-                      className={cn(
-                        "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
-                        alert.status === "critical"
-                          ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400"
-                          : alert.status === "warning"
-                          ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400"
-                          : "bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400"
-                      )}
+                      className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium", statusColor(alert.status))}
                     >
-                      {alert.status}
+                      {statusLabel(alert.status)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500 dark:text-gray-400">

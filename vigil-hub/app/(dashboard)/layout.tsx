@@ -12,6 +12,7 @@ import {
   LogOut,
   Menu,
   X,
+  KeyRound,
 } from "lucide-react";
 import { useState } from "react";
 import { signOut, useSession } from "@/lib/auth-client";
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/agents", label: "Agents", icon: Server },
   { href: "/checks", label: "Checks", icon: ClipboardCheck },
   { href: "/certificates", label: "Certificates", icon: Shield },
+  { href: "/expiry", label: "Expiry Monitors", icon: KeyRound },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
