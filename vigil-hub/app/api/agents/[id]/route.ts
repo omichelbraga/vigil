@@ -220,10 +220,11 @@ export async function DELETE(
     return NextResponse.json({ error: "Agent not found" }, { status: 404 });
   }
 
-  await db.agent.update({
-    where: { id },
-    data: { isActive: false },
-  });
+  // Hard delete — cascade removes checks, results, alert history
+  await db.check.deleteMany({ where: { agentId: id } });
+  await db.checkResult.deleteMany({ where: { agentId: id } });
+  await db.alertHistory.deleteMany({ where: { agentId: id } });
+  await db.agent.delete({ where: { id } });
 
-  return NextResponse.json({ message: "Agent deactivated" });
+  return NextResponse.json({ message: "Agent deleted" });
 }

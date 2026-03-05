@@ -1,7 +1,7 @@
 import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-
+import { getConnectedAgentIds } from "@/lib/ws-server";
 import argon2 from "argon2";
 import crypto from "crypto";
 
@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
   }
 
   const agents = await db.agent.findMany({
+    where: { isActive: true },
     select: {
       id: true,
       name: true,
@@ -31,16 +32,16 @@ export async function GET(req: NextRequest) {
     orderBy: { name: "asc" },
   });
 
-  const now = new Date();
+  const connectedIds = getConnectedAgentIds();
   const agentsWithStatus = agents.map((a) => ({
     ...a,
-    last_seen: a.lastSeen,   // snake_case alias for UI
+    last_seen: a.lastSeen,
     ip_address: a.ipAddress,
     check_count: a._count.checks,
     status:
       a.status === "pending"
         ? "pending"
-        : a.lastSeen && now.getTime() - a.lastSeen.getTime() < 120_000
+        : connectedIds.has(a.id)
         ? "online"
         : "offline",
   }));
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
 
   const name = body.name.trim();
 
-  const existing = await db.agent.findUnique({ where: { name } });
+  const existing = await db.agent.findFirst({ where: { name, isActive: true } });
   if (existing) {
     return NextResponse.json(
       { error: "Agent name already exists" },
@@ -80,13 +81,27 @@ export async function POST(req: NextRequest) {
   const token = crypto.randomUUID();
   const tokenHash = await argon2.hash(token, { type: argon2.argon2id });
 
-  const agent = await db.agent.create({
-    data: {
-      name,
-      tokenHash,
-      autoUpdate: body.autoUpdate ?? false,
-    },
-  });
+  let agent;
+  try {
+    agent = await db.agent.create({
+      data: {
+        name,
+        tokenHash,
+        autoUpdate: body.autoUpdate ?? false,
+      },
+    });
+  } catch (e: unknown) {
+    // Handle DB-level unique constraint (name taken by a soft-deleted record)
+    if (e && typeof e === "object" && "code" in e && (e as { code: string }).code === "P2002") {
+      // Force-delete the ghost record and retry
+      await db.agent.deleteMany({ where: { name, isActive: false } });
+      agent = await db.agent.create({
+        data: { name, tokenHash, autoUpdate: body.autoUpdate ?? false },
+      });
+    } else {
+      throw e;
+    }
+  }
 
   return NextResponse.json(
     { id: agent.id, name: agent.name, token },

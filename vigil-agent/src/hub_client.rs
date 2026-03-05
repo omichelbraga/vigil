@@ -8,24 +8,34 @@ use tracing::{error, info, warn};
 
 use crate::buffer::EventBuffer;
 
+/// A check configuration received from the Hub
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct RemoteCheck {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "type")]
+    pub check_type: String,
+    pub config: serde_json::Value,
+    pub interval_seconds: u64,
+}
+
 /// WebSocket client that maintains a persistent connection to the Vigil Hub.
 pub struct HubClient {
     hub_url: String,
     hub_token: String,
     agent_name: String,
+    /// Sends remote check configs from Hub to the monitoring loop
+    checks_tx: tokio::sync::watch::Sender<Vec<RemoteCheck>>,
 }
 
 impl HubClient {
-    pub fn new(hub_url: String, hub_token: String, agent_name: String) -> Self {
-        Self {
-            hub_url,
-            hub_token,
-            agent_name,
-        }
+    pub fn new(hub_url: String, hub_token: String, agent_name: String) -> (Self, tokio::sync::watch::Receiver<Vec<RemoteCheck>>) {
+        let (checks_tx, checks_rx) = tokio::sync::watch::channel(vec![]);
+        let client = Self { hub_url, hub_token, agent_name, checks_tx };
+        (client, checks_rx)
     }
 
     /// Main loop: connect, register, heartbeat, drain buffer, reconnect on failure.
-    /// Uses exponential backoff: 1,2,4,8,16,32,60s max.
     pub async fn run(&self, buffer: Arc<Mutex<EventBuffer>>) {
         let mut backoff_secs = 1u64;
         let max_backoff = 60u64;
@@ -50,11 +60,9 @@ impl HubClient {
     }
 
     async fn connect_and_run(&self, buffer: &Arc<Mutex<EventBuffer>>) -> Result<()> {
-        // Convert http(s) to ws(s) so tungstenite accepts it
         let url = self.hub_url
             .replacen("https://", "wss://", 1)
             .replacen("http://", "ws://", 1);
-        // Append WebSocket agent endpoint
         let url = format!("{}/ws/agent", url.trim_end_matches('/'));
         let url = &url;
         let request = tokio_tungstenite::tungstenite::http::Request::builder()
@@ -75,7 +83,6 @@ impl HubClient {
 
         info!("Connected to Hub");
 
-        // Send register message
         let register = serde_json::json!({
             "type": "register",
             "agent_name": self.agent_name,
@@ -83,9 +90,7 @@ impl HubClient {
             "os": std::env::consts::OS,
             "hostname": sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string()),
         });
-        write
-            .send(Message::Text(register.to_string()))
-            .await?;
+        write.send(Message::Text(register.to_string())).await?;
 
         let heartbeat_interval = Duration::from_secs(30);
         let drain_interval = Duration::from_secs(5);
@@ -98,7 +103,30 @@ impl HubClient {
                 msg = read.next() => {
                     match msg {
                         Some(Ok(Message::Text(text))) => {
-                            info!(msg = %text, "Received from Hub");
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                                match val.get("type").and_then(|t| t.as_str()) {
+                                    Some("configure_checks") => {
+                                        if let Some(checks_val) = val.get("checks") {
+                                            if let Ok(checks) = serde_json::from_value::<Vec<RemoteCheck>>(checks_val.clone()) {
+                                                info!(count = checks.len(), "Received check configuration from Hub");
+                                                // Merge with existing checks (don't replace — Hub may send partial updates)
+                                                let mut current = self.checks_tx.borrow().clone();
+                                                for new_check in checks {
+                                                    if let Some(pos) = current.iter().position(|c| c.id == new_check.id) {
+                                                        current[pos] = new_check;
+                                                    } else {
+                                                        current.push(new_check);
+                                                    }
+                                                }
+                                                self.checks_tx.send(current).ok();
+                                            }
+                                        }
+                                    }
+                                    _ => {
+                                        info!(msg = %text, "Received from Hub");
+                                    }
+                                }
+                            }
                         }
                         Some(Ok(Message::Ping(data))) => {
                             write.send(Message::Pong(data)).await?;
@@ -128,7 +156,6 @@ impl HubClient {
                     let events = buf.drain(50)?;
                     checks_count += events.len() as u64;
                     for event in events {
-                        // Wrap each event as a check_result message
                         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&event) {
                             let msg = serde_json::json!({
                                 "type": "check_result",

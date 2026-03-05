@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
+import type { Prisma } from "@prisma/client";
+
+type JsonObj = Prisma.InputJsonValue;
 
 export async function GET(req: NextRequest) {
   const session = await getSession(req);
@@ -95,20 +98,20 @@ async function POST_handler(req: NextRequest) {
           update: {
             name: "Email (SMTP)", type: "smtp", enabled: smtpEnabled,
             config: {
-              host: data.smtp_host, port: data.smtp_port ?? 25,
+              host: data.smtp_host ?? "", port: data.smtp_port ?? 25,
               user: data.smtp_user ?? "", pass: data.smtp_pass ?? "",
               from: data.smtp_from ?? "", alert_to: data.smtp_alert_to ?? "",
               secure: data.smtp_port === 465,
-            },
+            } as JsonObj,
           },
           create: {
             id: "smtp-default", name: "Email (SMTP)", type: "smtp", enabled: smtpEnabled,
             config: {
-              host: data.smtp_host, port: data.smtp_port ?? 25,
+              host: data.smtp_host ?? "", port: data.smtp_port ?? 25,
               user: data.smtp_user ?? "", pass: data.smtp_pass ?? "",
               from: data.smtp_from ?? "", alert_to: data.smtp_alert_to ?? "",
               secure: data.smtp_port === 465,
-            },
+            } as JsonObj,
           },
         });
         break;

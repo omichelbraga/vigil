@@ -41,36 +41,62 @@ disk_alert_pct = 90.0
 pub fn install_service(exe_path: &str, config_path: &str) -> Result<()> {
     use std::process::Command;
 
-    let full_config = std::fs::canonicalize(config_path)
+    // Use simple paths without UNC prefix for service registration
+    let exe = std::path::Path::new(exe_path);
+    let cfg = std::path::Path::new(config_path)
+        .canonicalize()
         .unwrap_or_else(|_| std::path::PathBuf::from(config_path));
 
-    let bin_path = format!(r#""{}" --config "{}""#, exe_path, full_config.display());
+    // Strip \\?\ UNC prefix if present (not valid in service BinaryPathName)
+    let cfg_str = cfg.to_string_lossy();
+    let cfg_clean = cfg_str.strip_prefix(r"\\?\").unwrap_or(&cfg_str);
+    let exe_str = exe.to_string_lossy();
 
-    let output = Command::new("sc")
-        .args([
-            "create",
-            "VIGILAgent",
-            "binPath=",
-            &bin_path,
-            "DisplayName=",
-            "Vigil Monitoring Agent",
-            "start=",
-            "auto",
-        ])
+    // Use PowerShell New-Service — more reliable than sc.exe for quoted paths
+    let ps_create = format!(
+        r#"New-Service -Name VIGILAgent -BinaryPathName '"{exe}" --config "{cfg}"' -DisplayName "Vigil Monitoring Agent" -StartupType Automatic"#,
+        exe = exe_str,
+        cfg = cfg_clean,
+    );
+
+    let create_out = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_create])
         .output()?;
 
-    if output.status.success() {
-        tracing::info!("Windows service VIGILAgent created");
-        let _ = Command::new("sc").args(["start", "VIGILAgent"]).output();
-        println!("✅ Windows service installed and started");
-    } else {
-        let err = String::from_utf8_lossy(&output.stderr);
-        if err.contains("1073") || err.to_lowercase().contains("already exists") {
-            println!("ℹ️  Service already exists");
+    let create_err = String::from_utf8_lossy(&create_out.stderr);
+    let create_stdout = String::from_utf8_lossy(&create_out.stdout);
+
+    if create_out.status.success() || create_err.contains("already exists") || create_stdout.contains("already exists") {
+        if create_out.status.success() {
+            tracing::info!("Windows service VIGILAgent created");
         } else {
-            eprintln!("⚠️  Service install failed: {}", err);
-            println!("   Start manually: vigil-agent --config \"{}\"", full_config.display());
+            println!("ℹ️  Service already exists — reconfiguring...");
         }
+
+        // Set failure/recovery actions (restart on crash)
+        let _ = Command::new("sc.exe")
+            .args(["failure", "VIGILAgent", "reset=", "86400", "actions=", "restart/5000/restart/10000/restart/30000"])
+            .output();
+
+        // Start the service
+        let start = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "Start-Service VIGILAgent -ErrorAction SilentlyContinue"])
+            .output()?;
+
+        if start.status.success() {
+            println!("✅ Windows service installed and started");
+            println!("   Auto-restart on crash: enabled (5s / 10s / 30s)");
+        } else {
+            println!("✅ Windows service installed");
+            println!("⚠️  Could not auto-start — run: Start-Service VIGILAgent");
+        }
+    } else {
+        eprintln!("⚠️  Service install failed: {}{}", create_stdout, create_err);
+        println!("   Run manually as Admin:");
+        println!(r#"   New-Service -Name VIGILAgent -BinaryPathName '"{exe}" --config "{cfg}"' -DisplayName "Vigil Monitoring Agent" -StartupType Automatic"#,
+            exe = exe_str, cfg = cfg_clean);
+        println!("   Start-Service VIGILAgent");
+        println!(r#"   sc.exe failure VIGILAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000"#);
     }
     Ok(())
 }

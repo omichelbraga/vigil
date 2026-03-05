@@ -29,3 +29,6 @@ hex = "0.4"
 sha2 = "0.10"
 webpki-roots = "0.26"
 x509-parser = "0.16"
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.7"

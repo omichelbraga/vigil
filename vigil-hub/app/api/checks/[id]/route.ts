@@ -192,3 +192,6 @@ export async function DELETE(
 
   return NextResponse.json({ message: "Check deleted" });
 }
+
+// PUT is an alias for PATCH (used by the edit form)
+export { PATCH as PUT };

@@ -20,11 +20,20 @@ export async function POST(req: NextRequest) {
   }
 
   const plainToken = crypto.randomUUID();
-  const tokenHash = crypto.createHash("sha256").update(plainToken).digest("hex");
+  const argon2 = await import("argon2");
+  const tokenHash = await argon2.default.hash(plainToken, { type: argon2.default.argon2id });
 
-  let name = body.hostname || "agent";
-  const existing = await db.agent.findUnique({ where: { name } });
-  if (existing) name = `${name}-${Date.now()}`;
+  let name = (body.hostname || "agent") as string;
+  // If name is taken by an active agent, append a short suffix; delete ghost (inactive) records
+  const existing = await db.agent.findFirst({ where: { name, isActive: true } });
+  if (existing) {
+    // Increment suffix: MIKE-PC-HOST → MIKE-PC-HOST-2 → MIKE-PC-HOST-3
+    let suffix = 2;
+    while (await db.agent.findFirst({ where: { name: `${name}-${suffix}`, isActive: true } })) suffix++;
+    name = `${name}-${suffix}`;
+  }
+  // Clean up any inactive ghost records with this name
+  await db.agent.deleteMany({ where: { name, isActive: false } });
 
   const agent = await db.agent.create({
     data: {

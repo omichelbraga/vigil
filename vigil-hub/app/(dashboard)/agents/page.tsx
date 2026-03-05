@@ -61,6 +61,23 @@ export default function AgentsPage() {
     fetchAgents();
   }, [fetchAgents]);
 
+  // Live agent status via SSE
+  useEffect(() => {
+    const es = new EventSource("/api/sse");
+    es.addEventListener("agent_status", (e) => {
+      try {
+        const statuses: { id: string; status: string }[] = JSON.parse(e.data);
+        setAgents((prev) =>
+          prev.map((a) => {
+            const match = statuses.find((s) => s.id === a.id);
+            return match ? { ...a, status: match.status } : a;
+          })
+        );
+      } catch {}
+    });
+    return () => es.close();
+  }, []);
+
   // Countdown timer for enrollment
   useEffect(() => {
     if (!enrollOpen) return;
@@ -164,8 +181,17 @@ export default function AgentsPage() {
     }
   };
 
-  const handleCopy = async (text: string) => {
-    await navigator.clipboard.writeText(text);
+  const handleCopy = (text: string) => {
+    // Works on HTTP (non-secure) origins — execCommand fallback
+    const el = document.createElement("textarea");
+    el.value = text;
+    el.setAttribute("readonly", "");
+    el.style.cssText = "position:fixed;top:-9999px;left:-9999px;opacity:0;";
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    try { document.execCommand("copy"); } catch { /* ignore */ }
+    document.body.removeChild(el);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -360,10 +386,10 @@ export default function AgentsPage() {
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Run on the agent machine:</p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-sm font-mono text-gray-900 dark:text-white break-all">
-                      vigil-agent --enroll {enrollToken.token} --hub http://192.168.9.113:3000
+                      vigil-agent --enroll {enrollToken.token} --hub-url http://192.168.9.113:3000
                     </code>
                     <button
-                      onClick={() => handleCopy(`vigil-agent --enroll ${enrollToken.token} --hub http://192.168.9.113:3000`)}
+                      onClick={() => handleCopy(`vigil-agent --enroll ${enrollToken.token} --hub-url http://192.168.9.113:3000`)}
                       className="rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
                     >
                       {copied ? (

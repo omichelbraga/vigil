@@ -4,11 +4,20 @@ import next from "next";
 import { setupWebSocket } from "./lib/ws-server";
 import { runCertChecks } from "./lib/cert-monitor";
 
+// Catch unhandled errors so they appear in /tmp/vigil-hub.log
+process.on("unhandledRejection", (reason) => {
+  console.error("[vigil-hub] Unhandled rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[vigil-hub] Uncaught exception:", err);
+});
+
 const dev = process.env.NODE_ENV !== "production";
 const hostname = "0.0.0.0";
 const port = parseInt(process.env.PORT || "3000", 10);
 
-const app = next({ dev, hostname, port });
+// Disable Turbopack (unstable in programmatic mode — use webpack)
+const app = next({ dev, hostname, port, turbopack: false } as Parameters<typeof next>[0]);
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {

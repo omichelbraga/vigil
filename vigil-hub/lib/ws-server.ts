@@ -2,7 +2,7 @@ import { Server as HttpServer, IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { db } from "./db";
 import argon2 from "argon2";
-import { processAlert } from "./alert-engine";
+import { processAlert, sendAgentOfflineAlert, sendAgentOnlineAlert } from "./alert-engine";
 
 interface ConnectedAgent {
   ws: WebSocket;
@@ -10,11 +10,24 @@ interface ConnectedAgent {
   agentName: string;
 }
 
-// Connected agents map
-const agents = new Map<string, ConnectedAgent>();
+// Use global to survive Next.js production module re-instantiation across route bundles
+declare global {
+  // eslint-disable-next-line no-var
+  var _vigilAgents: Map<string, ConnectedAgent> | undefined;
+  // eslint-disable-next-line no-var
+  var _vigilSseClients: Set<(event: string, data: string) => void> | undefined;
+}
 
-// SSE clients for broadcasting
-const sseClients = new Set<(event: string, data: string) => void>();
+const agents: Map<string, ConnectedAgent> =
+  global._vigilAgents ?? (global._vigilAgents = new Map());
+
+const sseClients: Set<(event: string, data: string) => void> =
+  global._vigilSseClients ?? (global._vigilSseClients = new Set());
+
+/** Returns the set of agent IDs currently connected via WebSocket */
+export function getConnectedAgentIds(): Set<string> {
+  return new Set((global._vigilAgents ?? agents).keys());
+}
 
 export function addSSEClient(send: (event: string, data: string) => void) {
   sseClients.add(send);
@@ -89,14 +102,44 @@ export function setupWebSocket(server: HttpServer) {
 
       agents.set(agent.id, { ws, agentId: agent.id, agentName: agent.name });
 
-      // Update agent status + IP
+      // Update agent status + IP, fire recovery alert if agent was offline
       db.agent
-        .update({
-          where: { id: agent.id },
-          data: {
-            lastSeen: new Date(),
-            ...(agent.remoteIp ? { ipAddress: agent.remoteIp } : {}),
-          },
+        .findUnique({ where: { id: agent.id }, select: { lastSeen: true } })
+        .then((prev) => {
+          const wasOffline = !prev?.lastSeen || (Date.now() - prev.lastSeen.getTime()) > 90_000;
+          return db.agent.update({
+            where: { id: agent.id },
+            data: {
+              lastSeen: new Date(),
+              ...(agent.remoteIp ? { ipAddress: agent.remoteIp } : {}),
+            },
+          }).then(() => {
+            if (wasOffline) sendAgentOnlineAlert(agent.name).catch(console.error);
+          });
+        })
+        .catch(console.error);
+
+      // Push configured checks to agent on connect
+      db.check
+        .findMany({
+          where: { agentId: agent.id, enabled: true },
+          select: { id: true, name: true, type: true, config: true, intervalSecs: true },
+        })
+        .then((checks) => {
+          // Only push checks that have a valid name and meaningful config
+          const valid = checks.filter((c) => c.name && c.name.trim().length > 0);
+          if (valid.length > 0) {
+            ws.send(JSON.stringify({
+              type: "configure_checks",
+              checks: valid.map((c) => ({
+                id: c.id,
+                name: c.name,
+                type: c.type,
+                config: c.config,
+                interval_seconds: c.intervalSecs,
+              })),
+            }));
+          }
         })
         .catch(console.error);
 
@@ -120,10 +163,7 @@ export function setupWebSocket(server: HttpServer) {
         agents.delete(agent.id);
 
         db.agent
-          .update({
-            where: { id: agent.id },
-            data: { lastSeen: new Date() },
-          })
+          .update({ where: { id: agent.id }, data: { lastSeen: new Date() } })
           .catch(console.error);
 
         broadcast("agent_status", {
@@ -131,6 +171,27 @@ export function setupWebSocket(server: HttpServer) {
           name: agent.name,
           status: "offline",
         });
+
+        // Mark all checks for this agent as unknown (stale)
+        db.check.findMany({ where: { agentId: agent.id, enabled: true }, select: { id: true } })
+          .then((checks) => {
+            const now = new Date();
+            return Promise.all(checks.map((c) =>
+              db.checkResult.create({
+                data: {
+                  checkId: c.id,
+                  agentId: agent.id,
+                  status: "unknown",
+                  message: `Agent ${agent.name} is offline`,
+                  timestamp: now,
+                },
+              })
+            ));
+          })
+          .catch(console.error);
+
+        // Fire agent-offline alert
+        sendAgentOfflineAlert(agent.name).catch(console.error);
       });
 
       ws.on("error", (err) => {
@@ -201,23 +262,45 @@ async function handleMessage(
       const checkedAt = msg.checked_at as string | undefined;
       const metadata = msg.metadata as Record<string, unknown> | undefined;
 
-      // Find or create the check
+      // Normalize check name: strip type prefix (e.g. "service:Spooler" → "Spooler")
+      const monitorType = checkName.includes(":") ? checkName.split(":")[0] : "unknown";
+      const displayName = checkName.includes(":") ? checkName.split(":").slice(1).join(":") : checkName;
+
+      // Find check: try exact name, then stripped display name, then by config.name
       let check = await db.check.findFirst({
         where: { agentId: agent.id, name: checkName },
+      }) ?? await db.check.findFirst({
+        where: { agentId: agent.id, name: displayName },
       });
 
       if (!check) {
-        // Auto-create check from agent report
-        const monitorType = checkName.split(":")[0] || "unknown";
+        // Fallback: search all agent checks and match by config.name
+        // (handles case where display name differs from service name, e.g. "Xbox Live Auth Manager" vs "XblAuthManager")
+        const agentChecks = await db.check.findMany({
+          where: { agentId: agent.id },
+          select: { id: true, name: true, type: true, config: true, intervalSecs: true },
+        });
+        const matched = agentChecks.find((c) => {
+          const cfg = c.config as Record<string, unknown> | null;
+          return cfg?.name === displayName || cfg?.name === checkName;
+        });
+        if (matched) check = matched as typeof check;
+      }
+
+      if (!check && displayName.trim().length > 0) {
+        // Auto-create only if no match and name is non-empty (config-file monitors not in Hub)
         check = await db.check.create({
           data: {
             agentId: agent.id,
-            name: checkName,
+            name: displayName,
             type: monitorType,
             config: {},
           },
         });
       }
+
+      // Skip result if we still have no check (e.g. empty-name reports)
+      if (!check) break;
 
       // Store result
       const result = await db.checkResult.create({

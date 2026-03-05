@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getConnectedAgentIds } from "@/lib/ws-server";
 
 
 
@@ -27,7 +28,9 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const agentId = searchParams.get("agent_id");
 
-  const where: Record<string, unknown> = {};
+  const where: Record<string, unknown> = {
+    agent: { isActive: true },  // only show checks for active agents
+  };
   if (agentId) {
     if (!isValidUUID(agentId)) {
       return NextResponse.json(
@@ -180,6 +183,21 @@ export async function POST(req: NextRequest) {
       createdAt: true,
     },
   });
+
+  // Push new check to agent if currently connected
+  const connected = global._vigilAgents as Map<string, { ws: { send: (d: string) => void }, agentId: string }> | undefined;
+  if (connected?.has(body.agentId)) {
+    connected.get(body.agentId)!.ws.send(JSON.stringify({
+      type: "configure_checks",
+      checks: [{
+        id: check.id,
+        name: check.name,
+        type: check.type,
+        config: check.config,
+        interval_seconds: check.intervalSecs,
+      }],
+    }));
+  }
 
   return NextResponse.json(check, { status: 201 });
 }

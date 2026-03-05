@@ -41,7 +41,7 @@ export async function processAlert(ctx: CheckContext) {
     try {
       await sendNotification({
         type: "alert",
-        title: `🚨 ${checkName} is ${status.toUpperCase()}`,
+        title: `${checkName} is ${status.toUpperCase()}`,
         body: message || `${checkName} on agent ${agentName} is ${status}`,
         agentName,
         checkName,
@@ -66,7 +66,7 @@ export async function processAlert(ctx: CheckContext) {
 
     await sendNotification({
       type: "resolved",
-      title: `✅ ${checkName} recovered`,
+      title: `${checkName} recovered`,
       body: `${checkName} on agent ${agentName} is back to normal.`,
       agentName,
       checkName,
@@ -389,4 +389,28 @@ async function getOrCreateDefaultRule(): Promise<string> {
 
   defaultRuleId = rule.id;
   return rule.id;
+}
+
+/** Fire an agent-offline notification directly to all enabled channels */
+export async function sendAgentOfflineAlert(agentName: string): Promise<void> {
+  await sendNotification({
+    type: "alert",
+    title: `${agentName} is offline`,
+    body: `Agent on host "${agentName}" is unreachable. The computer may be powered off or the Vigil agent service may have stopped.`,
+    agentName,
+    checkName: "Agent Heartbeat",
+    status: "offline",
+  });
+}
+
+/** Fire an agent-back-online recovery notification */
+export async function sendAgentOnlineAlert(agentName: string): Promise<void> {
+  await sendNotification({
+    type: "resolved",
+    title: `${agentName} is back online`,
+    body: `Agent on host "${agentName}" has reconnected and is reporting normally.`,
+    agentName,
+    checkName: "Agent Heartbeat",
+    status: "online",
+  });
 }
