@@ -16,6 +16,8 @@ import {
 } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface UserRecord {
   id: string;
@@ -28,7 +30,8 @@ interface UserRecord {
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("general");
   const [saving, setSaving] = useState(false);
-  const [saveResult, setSaveResult] = useState<{ section: string; ok: boolean; message: string } | null>(null);
+  const { success, error: toastError } = useToast();
+  const confirm = useConfirm();
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{
     key: string;
@@ -140,7 +143,6 @@ export default function SettingsPage() {
 
   const saveSettings = async (section: string, payload: Record<string, unknown>) => {
     setSaving(true);
-    setSaveResult(null);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
@@ -149,13 +151,12 @@ export default function SettingsPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setSaveResult({ section, ok: false, message: data.error || "Failed to save" });
+        toastError("Save failed", data.error || "Could not save settings");
       } else {
-        setSaveResult({ section, ok: true, message: "Saved successfully" });
-        setTimeout(() => setSaveResult(null), 3000);
+        success("Saved", "Settings saved successfully");
       }
     } catch {
-      setSaveResult({ section, ok: false, message: "Network error — could not save" });
+      toastError("Save failed", "Network error — could not save");
     } finally {
       setSaving(false);
     }
@@ -199,12 +200,13 @@ export default function SettingsPage() {
           const data = await usersRes.json();
           setUsers(Array.isArray(data) ? data : []);
         }
+        success("User invited successfully");
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to invite user");
+        toastError("Failed to invite user", data.error);
       }
     } catch {
-      alert("Failed to invite user");
+      toastError("Failed to invite user", "Please try again");
     } finally {
       setInviting(false);
     }
@@ -249,15 +251,6 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      {saveResult && (
-        <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${
-          saveResult.ok
-            ? "bg-emerald-600 text-white"
-            : "bg-red-600 text-white"
-        }`}>
-          {saveResult.ok ? "✅" : "❌"} {saveResult.message}
-        </div>
-      )}
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
           Settings
@@ -1048,18 +1041,15 @@ export default function SettingsPage() {
                         <td className="py-3 text-right">
                           <button
                             onClick={async () => {
-                              if (
-                                !confirm(
-                                  `Remove user ${user.email}?`
-                                )
-                              )
-                                return;
+                              const ok = await confirm({ title: "Delete User", message: `Remove user ${user.email}? This cannot be undone.`, confirmLabel: "Delete", variant: "danger" });
+                              if (!ok) return;
                               await fetch(`/api/users/${user.id}`, {
                                 method: "DELETE",
                               });
                               setUsers((prev) =>
                                 prev.filter((u) => u.id !== user.id)
                               );
+                              success("User deleted");
                             }}
                             className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400"
                           >

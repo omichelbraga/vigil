@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo } from "react";
 import { Plus, Shield, Activity, Download } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface CertRecord {
   id: string;
@@ -25,6 +27,8 @@ export default function CertificatesPage() {
   const [creating, setCreating] = useState(false);
   const [checking, setChecking] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const { success, error: toastError } = useToast();
+  const confirm = useConfirm();
   useEffect(() => setMounted(true), []);
 
   const formatDate = (d?: string) => {
@@ -33,9 +37,11 @@ export default function CertificatesPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Remove this certificate monitor?")) return;
+    const ok = await confirm({ title: "Remove Certificate", message: "Stop monitoring this certificate?", confirmLabel: "Remove", variant: "danger" });
+    if (!ok) return;
     await fetch(`/api/certs/${id}`, { method: "DELETE" });
     fetchCerts();
+    success("Certificate removed");
   };
 
   const handleCheckNow = async () => {
@@ -78,12 +84,13 @@ export default function CertificatesPage() {
         setFormDomain("");
         setFormPort("443");
         fetchCerts();
+        success("Domain added", "Certificate check starting...");
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to add domain");
+        toastError("Failed to add domain", data.error);
       }
     } catch {
-      alert("Failed to add domain");
+      toastError("Failed to add domain", "Please try again");
     } finally {
       setCreating(false);
     }

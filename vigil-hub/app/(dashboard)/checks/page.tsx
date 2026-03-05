@@ -5,6 +5,7 @@ import { Plus, Activity, ClipboardCheck } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast-provider";
 
 interface CheckRecord {
   id: string;
@@ -38,6 +39,7 @@ export default function ChecksPage() {
   const [formConfig, setFormConfig] = useState("{}");
   const [formInterval, setFormInterval] = useState("60");
   const [creating, setCreating] = useState(false);
+  const { success, error: toastError } = useToast();
 
   const fetchData = async () => {
     try {
@@ -78,7 +80,7 @@ export default function ChecksPage() {
       try {
         parsedConfig = JSON.parse(formConfig);
       } catch {
-        alert("Invalid JSON in config field");
+        toastError("Invalid JSON", "Check the config field and try again");
         setCreating(false);
         return;
       }
@@ -103,12 +105,13 @@ export default function ChecksPage() {
         setFormConfig("{}");
         setFormInterval("60");
         fetchData();
+        success("Check created successfully");
       } else {
         const data = await res.json();
-        alert(data.error || "Failed to create check");
+        toastError("Failed to create check", data.error);
       }
     } catch {
-      alert("Failed to create check");
+      toastError("Failed to create check", "Please try again");
     } finally {
       setCreating(false);
     }

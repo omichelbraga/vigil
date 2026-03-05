@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/toast-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface Agent {
   id: string;
@@ -34,6 +36,8 @@ export default function AgentsPage() {
   const [creating, setCreating] = useState(false);
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const { success, error: toastError } = useToast();
+  const confirm = useConfirm();
 
   const fetchAgents = async () => {
     try {
@@ -64,23 +68,26 @@ export default function AgentsPage() {
       if (res.ok) {
         setCreatedToken(data.token || data.api_key || null);
         fetchAgents();
+        success("Agent created", "Token copied to clipboard");
       } else {
-        alert(data.error || "Failed to create agent");
+        toastError("Failed to create agent", data.error);
       }
     } catch (err) {
-      alert("Failed to create agent");
+      toastError("Failed to create agent", "Please try again");
     } finally {
       setCreating(false);
     }
   };
 
   const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Delete agent "${name}"? This cannot be undone.`)) return;
+    const ok = await confirm({ title: "Delete Agent", message: `Delete agent "${name}"? This cannot be undone.`, confirmLabel: "Delete", variant: "danger" });
+    if (!ok) return;
     try {
       await fetch(`/api/agents/${id}`, { method: "DELETE" });
       setAgents((prev) => prev.filter((a) => a.id !== id));
+      success("Agent deleted");
     } catch (err) {
-      alert("Failed to delete agent");
+      toastError("Failed to delete agent", "Please try again");
     }
   };
 
