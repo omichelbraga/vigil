@@ -28,6 +28,7 @@ interface UserRecord {
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState("general");
   const [saving, setSaving] = useState(false);
+  const [saveResult, setSaveResult] = useState<{ section: string; ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{
     key: string;
@@ -49,15 +50,20 @@ export default function SettingsPage() {
 
   // Notifications
   const [slackWebhook, setSlackWebhook] = useState("");
+  const [slackCustomPayload, setSlackCustomPayload] = useState("");
   const [teamsWebhook, setTeamsWebhook] = useState("");
+  const [teamsCustomPayload, setTeamsCustomPayload] = useState("");
   const [discordWebhook, setDiscordWebhook] = useState("");
+  const [discordCustomPayload, setDiscordCustomPayload] = useState("");
   const [telegramToken, setTelegramToken] = useState("");
   const [telegramChatId, setTelegramChatId] = useState("");
+  const [telegramCustomPayload, setTelegramCustomPayload] = useState("");
   const [twilioSid, setTwilioSid] = useState("");
   const [twilioToken, setTwilioToken] = useState("");
   const [twilioFrom, setTwilioFrom] = useState("");
   const [twilioTo, setTwilioTo] = useState("");
   const [genericWebhook, setGenericWebhook] = useState("");
+  const [webhookCustomPayload, setWebhookCustomPayload] = useState("");
 
   // Branding
   const [companyName, setCompanyName] = useState("Vigil");
@@ -91,14 +97,19 @@ export default function SettingsPage() {
           if (data.smtp_user) setSmtpUser(data.smtp_user);
           if (data.smtp_from) setSmtpFrom(data.smtp_from);
           if (data.slack_webhook) setSlackWebhook(data.slack_webhook);
+          if (data.slack_custom_payload) setSlackCustomPayload(data.slack_custom_payload);
           if (data.teams_webhook) setTeamsWebhook(data.teams_webhook);
+          if (data.teams_custom_payload) setTeamsCustomPayload(data.teams_custom_payload);
           if (data.discord_webhook) setDiscordWebhook(data.discord_webhook);
+          if (data.discord_custom_payload) setDiscordCustomPayload(data.discord_custom_payload);
           if (data.telegram_token) setTelegramToken(data.telegram_token);
           if (data.telegram_chat_id) setTelegramChatId(data.telegram_chat_id);
+          if (data.telegram_custom_payload) setTelegramCustomPayload(data.telegram_custom_payload);
           if (data.twilio_sid) setTwilioSid(data.twilio_sid);
           if (data.twilio_from) setTwilioFrom(data.twilio_from);
           if (data.twilio_to) setTwilioTo(data.twilio_to);
           if (data.generic_webhook) setGenericWebhook(data.generic_webhook);
+          if (data.webhook_custom_payload) setWebhookCustomPayload(data.webhook_custom_payload);
           if (data.company_name) setCompanyName(data.company_name);
           if (data.logo_url) setLogoUrl(data.logo_url);
           if (data.primary_color) setPrimaryColor(data.primary_color);
@@ -125,18 +136,22 @@ export default function SettingsPage() {
 
   const saveSettings = async (section: string, payload: Record<string, unknown>) => {
     setSaving(true);
+    setSaveResult(null);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ section, ...payload }),
       });
+      const data = await res.json();
       if (!res.ok) {
-        const data = await res.json();
-        alert(data.error || "Failed to save settings");
+        setSaveResult({ section, ok: false, message: data.error || "Failed to save" });
+      } else {
+        setSaveResult({ section, ok: true, message: "Saved successfully" });
+        setTimeout(() => setSaveResult(null), 3000);
       }
     } catch {
-      alert("Failed to save settings");
+      setSaveResult({ section, ok: false, message: "Network error — could not save" });
     } finally {
       setSaving(false);
     }
@@ -154,8 +169,8 @@ export default function SettingsPage() {
       const data = await res.json();
       setTestResult({
         key: type,
-        ok: res.ok,
-        message: data.message || (res.ok ? "Connection successful" : "Connection failed"),
+        ok: data.success === true,
+        message: data.message || data.error || (res.ok ? "Connection successful" : "Connection failed"),
       });
     } catch {
       setTestResult({ key: type, ok: false, message: "Connection failed" });
@@ -199,6 +214,26 @@ export default function SettingsPage() {
   const cardClass =
     "rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900";
 
+  const PAYLOAD_VARS = "Available variables: {{title}} {{body}} {{checkName}} {{agentName}} {{status}} {{timestamp}}";
+
+  const PayloadEditor = ({
+    value, onChange, placeholder
+  }: { value: string; onChange: (v: string) => void; placeholder: string }) => (
+    <div className="mt-4">
+      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+        Custom Payload <span className="text-xs text-gray-400 font-normal">(optional — leave blank for default)</span>
+      </label>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={5}
+        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+      />
+      <p className="mt-1 text-xs text-gray-400">{PAYLOAD_VARS}</p>
+    </div>
+  );
+
   const tabs = [
     { value: "general", label: "General", icon: Settings },
     { value: "smtp", label: "SMTP", icon: Mail },
@@ -210,6 +245,15 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
+      {saveResult && (
+        <div className={`fixed top-4 right-4 z-50 flex items-center gap-2 rounded-lg px-4 py-3 text-sm font-medium shadow-lg ${
+          saveResult.ok
+            ? "bg-emerald-600 text-white"
+            : "bg-red-600 text-white"
+        }`}>
+          {saveResult.ok ? "✅" : "❌"} {saveResult.message}
+        </div>
+      )}
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
           Settings
@@ -438,10 +482,11 @@ export default function SettingsPage() {
                 className={cn(inputClass, "mt-1")}
               />
             </div>
+            <PayloadEditor value={slackCustomPayload} onChange={setSlackCustomPayload} placeholder={'{"text": "{{title}}\\n{{body}}"}'} />
             <div className="mt-4 flex gap-3">
               <button
                 onClick={() =>
-                  saveSettings("notifications", { slack_webhook: slackWebhook })
+                  saveSettings("notifications", { slack_webhook: slackWebhook, slack_custom_payload: slackCustomPayload })
                 }
                 disabled={saving}
                 className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
@@ -489,10 +534,11 @@ export default function SettingsPage() {
                 className={cn(inputClass, "mt-1")}
               />
             </div>
+            <PayloadEditor value={teamsCustomPayload} onChange={setTeamsCustomPayload} placeholder={'{"type": "message", "attachments": [...]}'} />
             <div className="mt-4 flex gap-3">
               <button
                 onClick={() =>
-                  saveSettings("notifications", { teams_webhook: teamsWebhook })
+                  saveSettings("notifications", { teams_webhook: teamsWebhook, teams_custom_payload: teamsCustomPayload })
                 }
                 disabled={saving}
                 className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
@@ -540,11 +586,13 @@ export default function SettingsPage() {
                 className={cn(inputClass, "mt-1")}
               />
             </div>
+            <PayloadEditor value={discordCustomPayload} onChange={setDiscordCustomPayload} placeholder={'{"content": "{{title}}\\n{{body}}"}'} />
             <div className="mt-4 flex gap-3">
               <button
                 onClick={() =>
                   saveSettings("notifications", {
                     discord_webhook: discordWebhook,
+                    discord_custom_payload: discordCustomPayload,
                   })
                 }
                 disabled={saving}
@@ -605,12 +653,14 @@ export default function SettingsPage() {
                 />
               </div>
             </div>
+            <PayloadEditor value={telegramCustomPayload} onChange={setTelegramCustomPayload} placeholder={"🚨 {{title}}\n\n{{body}}\n\nAgent: {{agentName}}\nCheck: {{checkName}}"} />
             <div className="mt-4 flex gap-3">
               <button
                 onClick={() =>
                   saveSettings("notifications", {
                     telegram_token: telegramToken,
                     telegram_chat_id: telegramChatId,
+                    telegram_custom_payload: telegramCustomPayload,
                   })
                 }
                 disabled={saving}
@@ -753,11 +803,13 @@ export default function SettingsPage() {
                 className={cn(inputClass, "mt-1")}
               />
             </div>
+            <PayloadEditor value={webhookCustomPayload} onChange={setWebhookCustomPayload} placeholder={'{"event": "{{type}}", "check": "{{checkName}}", "status": "{{status}}", "agent": "{{agentName}}", "message": "{{body}}", "timestamp": "{{timestamp}}"}'} />
             <div className="mt-4 flex gap-3">
               <button
                 onClick={() =>
                   saveSettings("notifications", {
                     generic_webhook: genericWebhook,
+                    webhook_custom_payload: webhookCustomPayload,
                   })
                 }
                 disabled={saving}

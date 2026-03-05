@@ -37,18 +37,24 @@ export async function processAlert(ctx: CheckContext) {
       },
     });
 
-    await sendNotification({
-      type: "alert",
-      title: `🚨 ${checkName} is ${status.toUpperCase()}`,
-      body: message || `${checkName} on agent ${agentName} is ${status}`,
-      agentName,
-      checkName,
-      status,
-    });
+    let delivered = false;
+    try {
+      await sendNotification({
+        type: "alert",
+        title: `🚨 ${checkName} is ${status.toUpperCase()}`,
+        body: message || `${checkName} on agent ${agentName} is ${status}`,
+        agentName,
+        checkName,
+        status,
+      });
+      delivered = true;
+    } catch (err) {
+      console.error("Failed to send alert notification:", err);
+    }
 
     await db.alertHistory.update({
       where: { id: incident.id },
-      data: { delivered: true },
+      data: { delivered },
     });
 
   } else if (status === "ok" && openIncident) {
@@ -78,6 +84,29 @@ interface Notification {
   status: string;
 }
 
+function renderTemplate(template: string, n: Notification): string {
+  return template
+    .replace(/\{\{title\}\}/g, n.title)
+    .replace(/\{\{body\}\}/g, n.body)
+    .replace(/\{\{checkName\}\}/g, n.checkName)
+    .replace(/\{\{agentName\}\}/g, n.agentName)
+    .replace(/\{\{status\}\}/g, n.status)
+    .replace(/\{\{type\}\}/g, n.type)
+    .replace(/\{\{timestamp\}\}/g, new Date().toISOString());
+}
+
+function buildPayload(config: Record<string, unknown>, n: Notification, defaultPayload: unknown): unknown {
+  const customPayload = config.custom_payload as string | undefined;
+  if (!customPayload?.trim()) return defaultPayload;
+  try {
+    const rendered = renderTemplate(customPayload, n);
+    return JSON.parse(rendered);
+  } catch {
+    console.warn("[alert] Custom payload is invalid JSON, using default");
+    return defaultPayload;
+  }
+}
+
 async function sendNotification(n: Notification) {
   const channels = await db.alertChannel.findMany({
     where: { enabled: true },
@@ -88,101 +117,109 @@ async function sendNotification(n: Notification) {
       const config = ch.config as Record<string, unknown>;
       switch (ch.type) {
         case "teams":
-          await sendTeams(config.url as string, n);
+          await sendTeams(config.url as string, n, config);
           break;
         case "slack":
-          await sendSlack(config.url as string, n);
+          await sendSlack(config.url as string, n, config);
           break;
         case "discord":
-          await sendDiscord(config.url as string, n);
+          await sendDiscord(config.url as string, n, config);
           break;
         case "telegram":
-          await sendTelegram(config.token as string, config.chat_id as string, n);
+          await sendTelegram(config.token as string, config.chat_id as string, n, config);
           break;
         case "webhook":
-          await sendWebhook(config.url as string, n);
+          await sendWebhook(config.url as string, n, config);
           break;
         case "smtp":
-          // SMTP alert sending — basic implementation
           await sendSmtpAlert(config, n);
           break;
+        default:
+          continue;
       }
+      console.log(`[alert] ✅ Delivered to ${ch.name} (${ch.type})`);
     } catch (err) {
-      console.error(`Alert delivery failed for channel ${ch.name}:`, err);
+      console.error(`[alert] ❌ FAILED for ${ch.name} (${ch.type}):`, err);
     }
   }
 }
 
-async function sendTeams(webhookUrl: string, n: Notification) {
+async function sendTeams(webhookUrl: string, n: Notification, config: Record<string, unknown>) {
   if (!webhookUrl) return;
   const color = n.type === "alert" ? "attention" : "good";
-  await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      type: "message",
-      attachments: [{
-        contentType: "application/vnd.microsoft.card.adaptive",
-        content: {
-          type: "AdaptiveCard",
-          version: "1.2",
-          body: [
-            { type: "TextBlock", size: "Large", weight: "Bolder", text: n.title, color },
-            { type: "TextBlock", text: n.body, wrap: true },
-            { type: "FactSet", facts: [
-              { title: "Agent", value: n.agentName },
-              { title: "Check", value: n.checkName },
-              { title: "Status", value: n.status.toUpperCase() },
-              { title: "Time", value: new Date().toISOString() },
-            ]},
-          ],
-        },
-      }],
-    }),
-  });
-}
-
-async function sendSlack(webhookUrl: string, n: Notification) {
-  if (!webhookUrl) return;
-  await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      text: `${n.title}\n${n.body}`,
-      attachments: [{
-        color: n.type === "alert" ? "danger" : "good",
-        fields: [
-          { title: "Agent", value: n.agentName, short: true },
-          { title: "Check", value: n.checkName, short: true },
+  const defaultPayload = {
+    type: "message",
+    attachments: [{
+      contentType: "application/vnd.microsoft.card.adaptive",
+      content: {
+        type: "AdaptiveCard",
+        version: "1.2",
+        body: [
+          { type: "TextBlock", size: "Large", weight: "Bolder", text: n.title, color },
+          { type: "TextBlock", text: n.body, wrap: true },
+          { type: "FactSet", facts: [
+            { title: "Agent", value: n.agentName },
+            { title: "Check", value: n.checkName },
+            { title: "Status", value: n.status.toUpperCase() },
+            { title: "Time", value: new Date().toISOString() },
+          ]},
         ],
-      }],
-    }),
-  });
-}
-
-async function sendDiscord(webhookUrl: string, n: Notification) {
-  if (!webhookUrl) return;
+      },
+    }],
+  };
   await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      embeds: [{
-        title: n.title,
-        description: n.body,
-        color: n.type === "alert" ? 0xff0000 : 0x00ff00,
-        fields: [
-          { name: "Agent", value: n.agentName, inline: true },
-          { name: "Check", value: n.checkName, inline: true },
-        ],
-        timestamp: new Date().toISOString(),
-      }],
-    }),
+    body: JSON.stringify(buildPayload(config, n, defaultPayload)),
   });
 }
 
-async function sendTelegram(token: string, chatId: string, n: Notification) {
+async function sendSlack(webhookUrl: string, n: Notification, config: Record<string, unknown>) {
+  if (!webhookUrl) return;
+  const defaultPayload = {
+    text: `${n.title}\n${n.body}`,
+    attachments: [{
+      color: n.type === "alert" ? "danger" : "good",
+      fields: [
+        { title: "Agent", value: n.agentName, short: true },
+        { title: "Check", value: n.checkName, short: true },
+      ],
+    }],
+  };
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildPayload(config, n, defaultPayload)),
+  });
+}
+
+async function sendDiscord(webhookUrl: string, n: Notification, config: Record<string, unknown>) {
+  if (!webhookUrl) return;
+  const defaultPayload = {
+    embeds: [{
+      title: n.title,
+      description: n.body,
+      color: n.type === "alert" ? 0xff0000 : 0x00ff00,
+      fields: [
+        { name: "Agent", value: n.agentName, inline: true },
+        { name: "Check", value: n.checkName, inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+    }],
+  };
+  await fetch(webhookUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildPayload(config, n, defaultPayload)),
+  });
+}
+
+async function sendTelegram(token: string, chatId: string, n: Notification, config: Record<string, unknown>) {
   if (!token || !chatId) return;
-  const text = `${n.title}\n\n${n.body}\n\nAgent: ${n.agentName}\nCheck: ${n.checkName}`;
+  const customPayload = config.custom_payload as string | undefined;
+  const text = customPayload?.trim()
+    ? renderTemplate(customPayload, n)
+    : `${n.title}\n\n${n.body}\n\nAgent: ${n.agentName}\nCheck: ${n.checkName}`;
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -190,12 +227,13 @@ async function sendTelegram(token: string, chatId: string, n: Notification) {
   });
 }
 
-async function sendWebhook(url: string, n: Notification) {
+async function sendWebhook(url: string, n: Notification, config: Record<string, unknown>) {
   if (!url) return;
+  const defaultPayload = { ...n, timestamp: new Date().toISOString() };
   await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...n, timestamp: new Date().toISOString() }),
+    body: JSON.stringify(buildPayload(config, n, defaultPayload)),
   });
 }
 

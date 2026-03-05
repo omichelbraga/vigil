@@ -33,10 +33,16 @@ export async function GET(req: NextRequest) {
     smtp_user: smtpChannel ? (smtpChannel.config as Record<string, unknown>)?.user ?? "" : "",
     smtp_from: smtpChannel ? (smtpChannel.config as Record<string, unknown>)?.from ?? "" : "",
     slack_webhook: slackChannel ? (slackChannel.config as Record<string, unknown>)?.url ?? "" : "",
+    slack_custom_payload: slackChannel ? (slackChannel.config as Record<string, unknown>)?.custom_payload ?? "" : "",
     teams_webhook: teamsChannel ? (teamsChannel.config as Record<string, unknown>)?.url ?? "" : "",
+    teams_custom_payload: teamsChannel ? (teamsChannel.config as Record<string, unknown>)?.custom_payload ?? "" : "",
     discord_webhook: discordChannel ? (discordChannel.config as Record<string, unknown>)?.url ?? "" : "",
-    telegram_bot_token: telegramChannel ? (telegramChannel.config as Record<string, unknown>)?.token ?? "" : "",
+    discord_custom_payload: discordChannel ? (discordChannel.config as Record<string, unknown>)?.custom_payload ?? "" : "",
+    telegram_token: telegramChannel ? (telegramChannel.config as Record<string, unknown>)?.token ?? "" : "",
     telegram_chat_id: telegramChannel ? (telegramChannel.config as Record<string, unknown>)?.chat_id ?? "" : "",
+    telegram_custom_payload: telegramChannel ? (telegramChannel.config as Record<string, unknown>)?.custom_payload ?? "" : "",
+    webhook_url: (channels.find(c => c.type === "webhook")?.config as Record<string, unknown>)?.url ?? "",
+    webhook_custom_payload: (channels.find(c => c.type === "webhook")?.config as Record<string, unknown>)?.custom_payload ?? "",
   });
 }
 
@@ -92,11 +98,17 @@ async function POST_handler(req: NextRequest) {
         break;
 
       case "notifications":
-        if (data.slack_webhook) await upsertChannel("slack-default", "Slack", "slack", { url: data.slack_webhook });
-        if (data.teams_webhook) await upsertChannel("teams-default", "Teams", "teams", { url: data.teams_webhook });
-        if (data.discord_webhook) await upsertChannel("discord-default", "Discord", "discord", { url: data.discord_webhook });
-        if (data.telegram_bot_token) await upsertChannel("telegram-default", "Telegram", "telegram", { token: data.telegram_bot_token, chat_id: data.telegram_chat_id });
-        if (data.generic_webhook) await upsertChannel("webhook-default", "Webhook", "webhook", { url: data.generic_webhook });
+        if (data.slack_webhook) await upsertChannel("slack-default", "Slack", "slack", { url: data.slack_webhook, custom_payload: data.slack_custom_payload ?? "" });
+        if (data.teams_webhook) await upsertChannel("teams-default", "Teams", "teams", { url: data.teams_webhook, custom_payload: data.teams_custom_payload ?? "" });
+        if (data.discord_webhook) await upsertChannel("discord-default", "Discord", "discord", { url: data.discord_webhook, custom_payload: data.discord_custom_payload ?? "" });
+        if ("telegram_token" in data || "telegram_bot_token" in data) {
+          const token = (data.telegram_token || data.telegram_bot_token) as string;
+          const chatId = data.telegram_chat_id as string;
+          if (token && chatId) {
+            await upsertChannel("telegram-default", "Telegram", "telegram", { token, chat_id: chatId, custom_payload: data.telegram_custom_payload ?? "" });
+          }
+        }
+        if (data.generic_webhook) await upsertChannel("webhook-default", "Webhook", "webhook", { url: data.generic_webhook, custom_payload: data.webhook_custom_payload ?? "" });
         break;
 
       case "azure_kv":

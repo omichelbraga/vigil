@@ -26,6 +26,10 @@ export async function POST(req: NextRequest) {
         return await testWebhook(body as Record<string, unknown>, "discord");
       case "webhook":
         return await testWebhook(body as Record<string, unknown>, "webhook");
+      case "telegram":
+        return await testTelegram(body as Record<string, unknown>);
+      case "twilio":
+        return await testTwilio(body as Record<string, unknown>);
       default:
         return NextResponse.json({ error: `Unsupported type: ${type}` }, { status: 400 });
     }
@@ -102,4 +106,72 @@ async function testWebhook(config: Record<string, unknown>, type: string) {
   }
 
   return NextResponse.json({ success: true, message: "Webhook delivered successfully" });
+}
+
+async function testTelegram(config: Record<string, unknown>) {
+  const token = (config.token || config.telegram_bot_token) as string;
+  const chatId = (config.chat_id || config.telegram_chat_id) as string;
+
+  if (!token || !chatId) {
+    return NextResponse.json({ error: "Bot token and chat ID are required" }, { status: 400 });
+  }
+
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: "✅ <b>Vigil</b> — Test notification. Telegram alerts are working.",
+      parse_mode: "HTML",
+    }),
+  });
+
+  const data = await res.json() as Record<string, unknown>;
+
+  if (!res.ok || !data.ok) {
+    const desc = (data.description as string) || `HTTP ${res.status}`;
+    return NextResponse.json({ success: false, error: desc }, { status: 502 });
+  }
+
+  return NextResponse.json({ success: true, message: "Telegram message sent" });
+}
+
+async function testTwilio(config: Record<string, unknown>) {
+  const sid = config.sid as string;
+  const token = config.token as string;
+  const from = config.from as string;
+  const to = config.to as string;
+
+  if (!sid || !token || !from || !to) {
+    return NextResponse.json(
+      { error: "Account SID, Auth Token, From, and To are all required" },
+      { status: 400 }
+    );
+  }
+
+  const credentials = Buffer.from(`${sid}:${token}`).toString("base64");
+
+  const body = new URLSearchParams({
+    From: from,
+    To: to,
+    Body: "Vigil test alert — SMS notifications are working.",
+  });
+
+  const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+
+  const data = await res.json() as Record<string, unknown>;
+
+  if (!res.ok) {
+    const msg = (data.message as string) || `HTTP ${res.status}`;
+    return NextResponse.json({ success: false, error: msg }, { status: 502 });
+  }
+
+  return NextResponse.json({ success: true, message: `SMS sent to ${to}` });
 }
