@@ -47,6 +47,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Better Auth may not persist custom roles — force-set admin role in DB
+    await db.user.updateMany({
+      where: { email: admin_email as string },
+      data: { role: "admin" },
+    });
+
     // Save branding config (upsert singleton)
     await db.brandingConfig.upsert({
       where: { id: "singleton" },

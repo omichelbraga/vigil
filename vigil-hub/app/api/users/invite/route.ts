@@ -26,8 +26,13 @@ export async function POST(req: NextRequest) {
         email: body.email,
         password: body.password,
         name: body.name || body.email.split("@")[0],
-        role,
       },
+    });
+
+    // Better Auth does not persist custom roles via signUpEmail — force-set role in DB
+    await db.user.updateMany({
+      where: { email: body.email },
+      data: { role },
     });
 
     const user = await db.user.findUnique({

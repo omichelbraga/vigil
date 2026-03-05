@@ -79,6 +79,10 @@ export default function SettingsPage() {
   // Users
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState("viewer");
+  const [invitePassword, setInvitePassword] = useState("");
+  const [inviteResult, setInviteResult] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
 
   // Azure KV
@@ -201,29 +205,45 @@ export default function SettingsPage() {
     }
   };
 
+  const generatePassword = () => {
+    const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#$";
+    return Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  };
+
   const handleInvite = async () => {
     if (!inviteEmail.trim()) return;
+    const pwd = invitePassword.trim() || generatePassword();
     setInviting(true);
+    setInviteResult(null);
     try {
       const res = await fetch("/api/users/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: inviteEmail.trim() }),
+        body: JSON.stringify({
+          email: inviteEmail.trim(),
+          name: inviteName.trim() || inviteEmail.split("@")[0],
+          password: pwd,
+          role: inviteRole,
+        }),
       });
       if (res.ok) {
         setInviteEmail("");
+        setInviteName("");
+        setInvitePassword("");
+        setInviteRole("viewer");
+        setInviteResult(pwd);
         const usersRes = await fetch("/api/users");
         if (usersRes.ok) {
           const data = await usersRes.json();
           setUsers(Array.isArray(data) ? data : []);
         }
-        success("User invited successfully");
+        success("User created successfully");
       } else {
         const data = await res.json();
-        toastError("Failed to invite user", data.error);
+        toastError("Failed to create user", data.error);
       }
     } catch {
-      toastError("Failed to invite user", "Please try again");
+      toastError("Failed to create user", "Please try again");
     } finally {
       setInviting(false);
     }
@@ -1003,25 +1023,61 @@ export default function SettingsPage() {
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
                 Users
               </h2>
-              <div className="flex items-center gap-2">
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="user@example.com"
-                  className={cn(inputClass, "w-64")}
-                  onKeyDown={(e) => e.key === "Enter" && handleInvite()}
-                />
-                <button
-                  onClick={handleInvite}
-                  disabled={inviting || !inviteEmail.trim()}
-                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  <Plus className="h-4 w-4" />
-                  {inviting ? "Inviting..." : "Invite User"}
+              <button
+                onClick={() => { setInviteResult(null); document.getElementById("invite-form")?.classList.toggle("hidden"); }}
+                className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+              >
+                <Plus className="h-4 w-4" />
+                Add User
+              </button>
+            </div>
+            {/* Invite form */}
+            <div id="invite-form" className="hidden mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/50">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">New User</h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Email *</label>
+                  <input type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="user@example.com" className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Display Name</label>
+                  <input type="text" value={inviteName} onChange={(e) => setInviteName(e.target.value)} placeholder="Jane Smith" className={inputClass} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Role</label>
+                  <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value)} className={inputClass}>
+                    <option value="admin">Admin</option>
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Password (leave blank to auto-generate)</label>
+                  <input type="text" value={invitePassword} onChange={(e) => setInvitePassword(e.target.value)} placeholder="Auto-generated" className={inputClass} />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-3">
+                <button onClick={handleInvite} disabled={inviting || !inviteEmail.trim()}
+                  className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                  {inviting ? "Creating..." : "Create User"}
+                </button>
+                <button onClick={() => { setInviteResult(null); document.getElementById("invite-form")?.classList.add("hidden"); }}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800">
+                  Cancel
                 </button>
               </div>
+              {inviteResult && (
+                <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-800 dark:bg-emerald-950/30">
+                  <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">✅ User created. Share this temporary password:</p>
+                  <div className="mt-1 flex items-center gap-2">
+                    <code className="flex-1 rounded bg-white px-3 py-1.5 text-sm font-mono text-gray-900 dark:bg-gray-900 dark:text-white border border-emerald-200 dark:border-emerald-800">{inviteResult}</code>
+                    <button onClick={() => { try { (document as any).execCommand ? (() => { const el = document.createElement("textarea"); el.value = inviteResult!; document.body.appendChild(el); el.select(); document.execCommand("copy"); document.body.removeChild(el); })() : navigator.clipboard.writeText(inviteResult!); success("Copied!"); } catch {} }}
+                      className="rounded px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700">Copy</button>
+                  </div>
+                </div>
+              )}
             </div>
+
             <div className="mt-4">
               {users.length > 0 ? (
                 <div className="overflow-x-auto">
