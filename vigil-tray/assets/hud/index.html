@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Vigil HUD</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #111827;
+    --border: #1f2937;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --accent: #3b82f6;
+    --ok: #2ecc71;
+    --warn: #f39c12;
+    --crit: #e74c3c;
+    --unknown: #3d91c7;
+    --gray: #808080;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; background: #0b1324; font-size: 11px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--gray); }
+  .dot.ok { background: var(--ok); }
+  .dot.amber { background: var(--warn); }
+  .dot.red { background: var(--crit); }
+  .dot.unknown { background: var(--unknown); }
+  .dot.gray { background: var(--gray); }
+  .agent-name { font-weight: 600; }
+  .header-meta { color: var(--muted); font-size: 11px; }
+  .header-meta a { color: var(--accent); text-decoration: none; }
+  nav { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  nav button { background: transparent; border: none; color: var(--muted); padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 12px; }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  nav button:hover { color: var(--text); }
+  main { flex: 1; overflow: auto; padding: 12px 14px; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+  button.action { background: var(--panel); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+  button.action:hover { border-color: var(--accent); }
+  button.action[disabled] { opacity: 0.5; cursor: not-allowed; }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 3px 6px; border-radius: 4px; font-size: 11px; }
+  .row-actions { display: flex; gap: 6px; }
+  .placeholder { color: var(--muted); padding: 40px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
+  .event-list { list-style: none; max-height: 100%; }
+  .event-list li { padding: 6px 8px; border-bottom: 1px solid var(--border); font-family: ui-monospace, monospace; font-size: 11px; }
+  .event-list li .name { color: var(--accent); font-weight: 600; margin-right: 6px; }
+  .event-list li .at { color: var(--muted); margin-right: 6px; }
+  .diag-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .diag-grid button { padding: 14px; text-align: left; }
+  .kv { display: grid; grid-template-columns: 140px 1fr; gap: 4px 12px; font-size: 11px; color: var(--muted); margin-top: 10px; }
+  .kv b { color: var(--text); font-weight: 500; }
+  footer { padding: 6px 14px; font-size: 10px; color: var(--muted); border-top: 1px solid var(--border); background: var(--panel); }
+</style>
+</head>
+<body>
+<header>
+  <span class="pill"><span id="health-dot" class="dot gray"></span><span id="health-label">unknown</span></span>
+  <span class="agent-name" id="agent-name">—</span>
+  <span class="header-meta">Hub: <a id="hub-link" href="#">—</a> • v<span id="version">—</span> • key <span id="pubkey">—</span></span>
+</header>
+<nav>
+  <button data-tab="monitors" class="active">Monitors</button>
+  <button data-tab="resources">Resources</button>
+  <button data-tab="events">Events</button>
+  <button data-tab="diagnostics">Diagnostics</button>
+</nav>
+<main>
+  <section id="tab-monitors" class="tab active">
+    <table>
+      <thead><tr><th></th><th>Name</th><th>Type</th><th>Target</th><th>Latency</th><th>Last</th><th></th></tr></thead>
+      <tbody id="monitors-body"><tr><td colspan="7" class="placeholder">Loading…</td></tr></tbody>
+    </table>
+  </section>
+  <section id="tab-resources" class="tab">
+    <div class="placeholder">
+      CPU / RAM / Disk charts coming in v0.4.<br />
+      The agent's resource sampler already streams to the Hub — view charts there for now.
+    </div>
+  </section>
+  <section id="tab-events" class="tab">
+    <ul id="events-list" class="event-list"></ul>
+  </section>
+  <section id="tab-diagnostics" class="tab">
+    <div class="diag-grid">
+      <button class="action" onclick="rpc('run_doctor',{})">Run Doctor (opens terminal)</button>
+      <button class="action" onclick="rpc('copy_ipc_path',{})">Copy IPC path to clipboard</button>
+      <button class="action" onclick="rpc('reload_config',{})">Reload agent config</button>
+      <button class="action" onclick="rpc('tail_log',{lines:200})">Fetch last 200 log lines</button>
+    </div>
+    <div class="kv">
+      <span>IPC transport</span><b id="diag-ipc">—</b>
+      <span>Buffer depth</span><b id="diag-buffer">—</b>
+      <span>Dropped events</span><b id="diag-dropped">—</b>
+      <span>Uptime (s)</span><b id="diag-uptime">—</b>
+      <span>Signing pubkey</span><b id="diag-pubkey">—</b>
+      <span>Protocol</span><b id="diag-protocol">—</b>
+    </div>
+    <pre id="diag-output" style="margin-top:10px; color:var(--muted); font-family:ui-monospace,monospace; white-space:pre-wrap;"></pre>
+  </section>
+</main>
+<footer>Vigil Tray • Press Ctrl+R to refresh</footer>
+
+<script>
+  // -- tab switching -----------------------------------------------------
+  document.querySelectorAll('nav button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+  });
+
+  // -- host bridge -------------------------------------------------------
+  //
+  // The Rust host speaks JSON: JS posts {id,method,params}, host responds
+  // with window.hudResult(id, payload) | window.hudError(id, msg).
+  // Host also pushes snapshots via window.hudSnapshot(state).
+  // Host pushes single events via window.hudEvent(evt).
+
+  let nextId = 1;
+  const pending = new Map();
+
+  function rpc(method, params) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      try {
+        if (window.ipc && window.ipc.postMessage) {
+          window.ipc.postMessage(JSON.stringify({ id, method, params: params || {} }));
+        } else {
+          reject(new Error('IPC bridge unavailable'));
+        }
+      } catch (e) {
+        pending.delete(id);
+        reject(e);
+      }
+    });
+  }
+
+  window.hudResult = (id, payload) => {
+    const p = pending.get(id); if (!p) return;
+    pending.delete(id); p.resolve(payload);
+  };
+  window.hudError = (id, msg) => {
+    const p = pending.get(id); if (!p) return;
+    pending.delete(id); p.reject(new Error(msg));
+    document.getElementById('diag-output').textContent = 'Error: ' + msg;
+  };
+
+  // -- state rendering ---------------------------------------------------
+  function renderSnapshot(state) {
+    const s = state.status || {};
+    document.getElementById('agent-name').textContent = s.agent_name || '—';
+    document.getElementById('version').textContent = s.version || '—';
+    document.getElementById('pubkey').textContent = s.signing_pubkey_prefix || '—';
+    const hub = s.hub_url || '—';
+    const a = document.getElementById('hub-link');
+    a.textContent = hub;
+    a.href = hub;
+    a.onclick = (e) => { e.preventDefault(); rpc('open_url', { url: hub }); };
+
+    document.getElementById('diag-ipc').textContent = state.ipc_path || '—';
+    document.getElementById('diag-buffer').textContent = s.buffer_depth ?? '—';
+    document.getElementById('diag-dropped').textContent = s.dropped_events ?? '—';
+    document.getElementById('diag-uptime').textContent = s.uptime_secs ?? '—';
+    document.getElementById('diag-pubkey').textContent = s.signing_pubkey_prefix || '—';
+    document.getElementById('diag-protocol').textContent =
+      s.protocol_version != null
+        ? ('hub v' + s.protocol_version + ' / ipc v' + (s.ipc_protocol_version ?? '?'))
+        : '—';
+
+    const dot = document.getElementById('health-dot');
+    dot.className = 'dot ' + (state.color || 'gray');
+    document.getElementById('health-label').textContent = state.color || 'unknown';
+
+    renderMonitors(state.checks || []);
+    renderEvents(state.events || []);
+  }
+
+  function renderMonitors(checks) {
+    const tbody = document.getElementById('monitors-body');
+    if (!checks.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="placeholder">No checks. Enroll an agent from the Hub to start.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '';
+    for (const c of checks) {
+      const tr = document.createElement('tr');
+      const dotClass = mapStatusDot(c.status_last);
+      const latency = c.latency_last_ms != null ? (c.latency_last_ms + ' ms') : '—';
+      const last = c.last_checked ? new Date(c.last_checked).toLocaleTimeString() : '—';
+      tr.innerHTML = `
+        <td><span class="dot ${dotClass}"></span></td>
+        <td>${escapeHtml(c.name)}</td>
+        <td>${escapeHtml(c.type)}</td>
+        <td style="color:var(--muted); font-family:ui-monospace,monospace; font-size:11px;">${escapeHtml(c.target)}</td>
+        <td>${latency}</td>
+        <td>${last}</td>
+        <td class="row-actions"></td>
+      `;
+      const actions = tr.querySelector('.row-actions');
+
+      const runBtn = document.createElement('button');
+      runBtn.className = 'action';
+      runBtn.textContent = 'Run now';
+      runBtn.onclick = () => rpc('run_check_now', { check_id: c.id });
+      actions.appendChild(runBtn);
+
+      const silSel = document.createElement('select');
+      silSel.innerHTML = '<option value="">Silence…</option><option value="900">15m</option><option value="3600">1h</option><option value="14400">4h</option>';
+      silSel.onchange = () => {
+        if (!silSel.value) return;
+        rpc('silence', { check_id: c.id, duration_secs: parseInt(silSel.value, 10) });
+        silSel.value = '';
+      };
+      actions.appendChild(silSel);
+
+      const dashBtn = document.createElement('button');
+      dashBtn.className = 'action';
+      dashBtn.textContent = 'Dashboard';
+      dashBtn.onclick = () => rpc('open_check_in_dashboard', { check_id: c.id });
+      actions.appendChild(dashBtn);
+
+      tbody.appendChild(tr);
+    }
+  }
+
+  function mapStatusDot(s) {
+    switch ((s || '').toLowerCase()) {
+      case 'ok': case 'up': case 'healthy': return 'ok';
+      case 'warning': case 'warn': case 'degraded': return 'amber';
+      case 'critical': case 'down': case 'error': return 'red';
+      default: return 'unknown';
+    }
+  }
+
+  function renderEvents(events) {
+    const ul = document.getElementById('events-list');
+    ul.innerHTML = '';
+    for (const e of events) {
+      const li = document.createElement('li');
+      const at = e.at ? new Date(e.at).toLocaleTimeString() : '';
+      const data = JSON.stringify(e.data || {});
+      li.innerHTML = `<span class="at">${at}</span><span class="name">${escapeHtml(e.name)}</span>${escapeHtml(data)}`;
+      ul.appendChild(li);
+    }
+    if (!events.length) {
+      ul.innerHTML = '<li class="placeholder">No events yet. Subscribed and waiting…</li>';
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;');
+  }
+
+  // Host-initiated pushes
+  window.hudSnapshot = renderSnapshot;
+  window.hudEvent = (evt) => {
+    // Prepend into current events list
+    const ul = document.getElementById('events-list');
+    const li = document.createElement('li');
+    const at = evt.at ? new Date(evt.at).toLocaleTimeString() : new Date().toLocaleTimeString();
+    const data = JSON.stringify(evt.data || {});
+    li.innerHTML = `<span class="at">${at}</span><span class="name">${escapeHtml(evt.name)}</span>${escapeHtml(data)}`;
+    ul.insertBefore(li, ul.firstChild);
+    while (ul.children.length > 50) ul.removeChild(ul.lastChild);
+  };
+
+  // Diag output sink — host pushes tail_log output here
+  window.hudDiagOutput = (text) => {
+    document.getElementById('diag-output').textContent = text;
+  };
+
+  // Bootstrap — ask host for initial state
+  rpc('bootstrap', {}).then(renderSnapshot).catch(err => {
+    document.getElementById('monitors-body').innerHTML =
+      `<tr><td colspan="7" class="placeholder">IPC bootstrap failed: ${escapeHtml(err.message)}</td></tr>`;
+  });
+
+  // Ctrl+R refresh
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.key === 'r') {
+      e.preventDefault();
+      rpc('bootstrap', {}).then(renderSnapshot);
+    }
+  });
+</script>
+</body>
+</html>

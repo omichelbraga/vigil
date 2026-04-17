@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Connect to Vigil Hub</title>
+<style>
+  :root { --bg:#0f172a; --panel:#111827; --border:#1f2937; --text:#e5e7eb; --muted:#9ca3af; --accent:#3b82f6; --ok:#2ecc71; --crit:#e74c3c; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 13px; padding: 20px; }
+  h1 { font-size: 16px; margin-bottom: 14px; }
+  p.subtitle { color: var(--muted); margin-bottom: 18px; }
+  label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; margin-top: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  input { width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 8px 10px; border-radius: 4px; font-size: 13px; font-family: ui-monospace, monospace; }
+  input:focus { outline: none; border-color: var(--accent); }
+  .actions { margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end; }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 8px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  button.primary { background: var(--accent); border-color: var(--accent); }
+  button:hover { opacity: 0.9; }
+  button[disabled] { opacity: 0.5; cursor: not-allowed; }
+  .output { margin-top: 16px; background: #0b1324; border: 1px solid var(--border); border-radius: 4px; padding: 10px; font-family: ui-monospace, monospace; font-size: 11px; white-space: pre-wrap; max-height: 140px; overflow: auto; }
+  .status-ok { color: var(--ok); }
+  .status-err { color: var(--crit); }
+</style>
+</head>
+<body>
+<h1>Connect to Vigil Hub</h1>
+<p class="subtitle">Enter your Hub URL and enrollment token. You can get a token from the Hub's Agents page.</p>
+
+<label for="hub">Hub URL</label>
+<input id="hub" type="url" placeholder="https://vigil.example.com" />
+
+<label for="token">Enrollment token</label>
+<input id="token" type="text" placeholder="vigil_enroll_..." />
+
+<div class="actions">
+  <button id="test">Test connection</button>
+  <button id="enroll" class="primary">Enroll agent</button>
+</div>
+
+<div id="output" class="output" style="display:none;"></div>
+
+<script>
+  let nextId = 1;
+  const pending = new Map();
+  function rpc(method, params) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      window.ipc.postMessage(JSON.stringify({ id, method, params: params || {} }));
+    });
+  }
+  window.hudResult = (id, p) => { const h=pending.get(id); if(h){pending.delete(id); h.resolve(p);} };
+  window.hudError  = (id, m) => { const h=pending.get(id); if(h){pending.delete(id); h.reject(new Error(m));} };
+
+  const out = document.getElementById('output');
+  function log(line, cls) {
+    out.style.display = 'block';
+    const span = document.createElement('div');
+    if (cls) span.className = cls;
+    span.textContent = line;
+    out.appendChild(span);
+    out.scrollTop = out.scrollHeight;
+  }
+  window.wizardLog = log;
+
+  document.getElementById('test').onclick = async () => {
+    const hub = document.getElementById('hub').value.trim();
+    if (!hub) { log('Enter a hub URL first', 'status-err'); return; }
+    out.innerHTML = '';
+    log('Testing ' + hub + '/api/health …');
+    try {
+      const r = await rpc('wizard_test_connection', { hub_url: hub });
+      log('OK — ' + JSON.stringify(r), 'status-ok');
+    } catch (e) {
+      log('FAILED — ' + e.message, 'status-err');
+    }
+  };
+
+  document.getElementById('enroll').onclick = async () => {
+    const hub = document.getElementById('hub').value.trim();
+    const token = document.getElementById('token').value.trim();
+    if (!hub || !token) { log('Hub URL and token required', 'status-err'); return; }
+    out.innerHTML = '';
+    log('Starting enrollment…');
+    try {
+      await rpc('wizard_enroll', { hub_url: hub, token });
+      log('Enrolled. You can close this window.', 'status-ok');
+    } catch (e) {
+      log('Enrollment failed: ' + e.message, 'status-err');
+    }
+  };
+</script>
+</body>
+</html>

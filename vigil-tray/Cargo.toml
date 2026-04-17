@@ -1,0 +1,69 @@
+[package]
+name = "vigil-tray"
+version = "0.3.0-dev"
+edition = "2021"
+description = "Vigil system-tray companion (HUD + quick actions) for vigil-agent"
+
+# -------------------------------------------------------------------------
+# Feature flags
+#
+# * `tray`    — platform tray icon + menu (tray-icon + tao event loop).
+#               On Linux this pulls in GTK / ayatana AppIndicator at
+#               runtime but the *build* only needs libdbus/libappindicator
+#               headers. We gate it so `--no-default-features` still
+#               produces a useful binary that exercises the IPC client
+#               and the single-instance plumbing.
+#
+# * `hud`     — webview-backed HUD + first-run wizard (wry). On Linux this
+#               additionally needs webkit2gtk-4.1 dev libs. On Windows the
+#               built-in WebView2 is used; no system libs required.
+#
+# Windows builds should pass `--features hud` (or use the convenience alias
+# `--features windows-all` below). Linux server builds where webkit2gtk is
+# missing can use `--no-default-features --features tray` or drop `tray`
+# entirely to get a headless IPC-smoke binary.
+# -------------------------------------------------------------------------
+[features]
+default = ["tray"]
+tray = ["dep:tray-icon", "dep:tao", "dep:image"]
+hud = ["tray", "dep:wry"]
+# Alias for Windows builds — enables everything.
+windows-all = ["tray", "hud"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "time", "io-util", "macros", "signal"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+futures-util = { version = "0.3", features = ["sink"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+directories = "5"
+webbrowser = "1"
+once_cell = "1"
+
+# Optional — gated behind `tray` / `hud`.
+# Versions chosen to match the Tauri v2 stack so the three libs
+# co-operate on tao's event loop types.
+tray-icon = { version = "0.22", optional = true }
+tao = { version = "0.35", optional = true }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+wry = { version = "0.55", optional = true, default-features = false, features = ["protocol"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_System_Registry",
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "vigil-tray"
+path = "src/main.rs"
