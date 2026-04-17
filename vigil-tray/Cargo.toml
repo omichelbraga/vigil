@@ -64,6 +64,20 @@ windows = { version = "0.58", features = [
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# -------------------------------------------------------------------------
+# Build-script deps.
+#
+# `zip` is only used by build.rs and only when targeting Windows, to unpack
+# the Microsoft.Web.WebView2 NuGet package and copy WebView2Loader.dll next
+# to the produced .exe. The build.rs code path that uses `zip` is a no-op
+# on non-Windows hosts (it short-circuits on CARGO_CFG_TARGET_OS != windows)
+# so Linux-only consumers pay nothing beyond the one-time compile of the
+# crate. HTTP fetching is done via `curl` (shell-out) to keep the build
+# dep-graph tiny — we deliberately avoid pulling in reqwest/ureq/rustls.
+# -------------------------------------------------------------------------
+[build-dependencies]
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+
 [[bin]]
 name = "vigil-tray"
 path = "src/main.rs"
