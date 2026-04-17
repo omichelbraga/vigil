@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
+import { audit } from "@/lib/audit";
 
 export async function GET(req: NextRequest) {
   const session = await getSession(req);
@@ -41,6 +42,16 @@ export async function PATCH(req: NextRequest) {
     select: { id: true, name: true, email: true, role: true },
   });
 
+  await audit(req, session.user.id, "user.update", {
+    entityType: "user",
+    entityId: user.id,
+    metadata: {
+      email: user.email,
+      ...(body.role ? { role: body.role } : {}),
+      ...(body.name ? { name: body.name } : {}),
+    },
+  });
+
   return NextResponse.json(user);
 }
 
@@ -54,6 +65,15 @@ export async function DELETE(req: NextRequest) {
   if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
   if (id === session.user.id) return NextResponse.json({ error: "Cannot delete yourself" }, { status: 400 });
 
+  const target = await db.user.findUnique({ where: { id }, select: { email: true } });
+
   await db.user.delete({ where: { id } });
+
+  await audit(req, session.user.id, "user.delete", {
+    entityType: "user",
+    entityId: id,
+    metadata: target ? { email: target.email } : {},
+  });
+
   return NextResponse.json({ success: true });
 }

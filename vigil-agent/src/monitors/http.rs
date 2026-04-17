@@ -1,4 +1,5 @@
 use super::{CheckResult, CheckStatus, Monitor, async_trait};
+use crate::net_safety;
 use chrono::Utc;
 use std::time::{Duration, Instant};
 
@@ -25,6 +26,22 @@ impl HttpMonitor {
 impl Monitor for HttpMonitor {
     async fn check(&self) -> CheckResult {
         let start = Instant::now();
+
+        // Refuse Hub-sent internal URLs unless the operator opts in.
+        if !net_safety::url_allowed(&self.url) {
+            return CheckResult {
+                monitor_name: format!("http:{}", self.url),
+                monitor_type: "http".to_string(),
+                status: CheckStatus::Unknown,
+                message: format!(
+                    "Refusing HTTP probe to internal/private URL {} (set VIGIL_ALLOW_INTERNAL_NET=1 to override)",
+                    self.url
+                ),
+                response_time_ms: None,
+                metadata: None,
+                timestamp: Utc::now(),
+            };
+        }
 
         let client = reqwest::Client::builder()
             .timeout(self.timeout)

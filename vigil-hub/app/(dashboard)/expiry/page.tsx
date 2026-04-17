@@ -6,6 +6,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 import { statusLabel, statusColor } from "@/lib/status";
 import { useToast } from "@/components/ui/toast-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 
 interface ExpiryMonitor {
   id: string;
@@ -57,7 +58,8 @@ export default function ExpiryPage() {
   const [editWarnDays, setEditWarnDays] = useState("30");
   const [editCategory, setEditCategory] = useState("other");
 
-  const { success: toastSuccess, error: toastError, confirm: showConfirm } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
+  const showConfirm = useConfirm();
 
   const fetchMonitors = async () => {
     try {
@@ -91,7 +93,12 @@ export default function ExpiryPage() {
   };
 
   const handleDelete = async (id: string, name: string) => {
-    const confirmed = await showConfirm(`Delete "${name}"? This cannot be undone.`);
+    const confirmed = await showConfirm({
+      title: "Delete Monitor",
+      message: `Delete "${name}"? This cannot be undone.`,
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
     if (!confirmed) return;
     try {
       await fetch(`/api/expiry-monitors/${id}`, { method: "DELETE" });

@@ -1,4 +1,5 @@
 use super::{CheckResult, CheckStatus, Monitor, async_trait};
+use crate::net_safety;
 use chrono::Utc;
 use std::time::Instant;
 use tokio::process::Command;
@@ -17,6 +18,22 @@ impl PingMonitor {
 #[async_trait]
 impl Monitor for PingMonitor {
     async fn check(&self) -> CheckResult {
+        // Block argument injection (leading `-`) and internal/loopback probes.
+        if !net_safety::safe_argv_target(&self.target) || !net_safety::host_allowed(&self.target) {
+            return CheckResult {
+                monitor_name: format!("ping:{}", self.target),
+                monitor_type: "ping".to_string(),
+                status: CheckStatus::Unknown,
+                message: format!(
+                    "Refusing ping to {} (invalid target or internal address)",
+                    self.target
+                ),
+                response_time_ms: None,
+                metadata: None,
+                timestamp: Utc::now(),
+            };
+        }
+
         let start = Instant::now();
         let (status, message, rtt) = run_ping(&self.target).await;
         let elapsed = start.elapsed().as_millis() as u64;
@@ -37,21 +54,20 @@ impl Monitor for PingMonitor {
 
 #[cfg(target_os = "windows")]
 async fn run_ping(target: &str) -> (CheckStatus, String, Option<u64>) {
+    // `--` separator unsupported by Windows ping; host_allowed already rejected leading `-`.
     let output = Command::new("ping")
         .args(["-n", "1", "-w", "2000", target])
         .output()
         .await;
-
     parse_ping_output(target, output)
 }
 
 #[cfg(not(target_os = "windows"))]
 async fn run_ping(target: &str) -> (CheckStatus, String, Option<u64>) {
     let output = Command::new("ping")
-        .args(["-c", "1", "-W", "2", target])
+        .args(["-c", "1", "-W", "2", "--", target])
         .output()
         .await;
-
     parse_ping_output(target, output)
 }
 

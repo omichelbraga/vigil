@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { audit } from "@/lib/audit";
 
 import { encrypt, decrypt } from "@/lib/encryption";
 
@@ -117,6 +118,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    await audit(req, session.user.id, "azure_kv.update", {
+      entityType: "azure_kv",
+      entityId: updated.id,
+      metadata: { name: updated.name, vaultUrl: updated.vaultUrl },
+    });
+
     return NextResponse.json(updated);
   }
 
@@ -138,6 +145,12 @@ export async function POST(req: NextRequest) {
       enabled: true,
       createdAt: true,
     },
+  });
+
+  await audit(req, session.user.id, "azure_kv.create", {
+    entityType: "azure_kv",
+    entityId: config.id,
+    metadata: { name: config.name, vaultUrl: config.vaultUrl },
   });
 
   return NextResponse.json(config, { status: 201 });

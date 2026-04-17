@@ -6,8 +6,8 @@ const PUBLIC_PATHS = [
   "/api/auth",
   "/api/update",
   "/api/enroll",
-  "/api/setup",          // first-run setup endpoints (no session yet)
-  "/api/settings/test",  // used by setup wizard before login
+  "/api/setup",          // first-run setup endpoints (self-checks no users exist)
+  "/api/settings/test",  // self-checks: setup mode OR admin session
   "/api/settings/oauth", // public — only exposes enabled flags, no secrets
   "/login",
   "/setup",
@@ -36,13 +36,19 @@ export function middleware(request: NextRequest) {
     "camera=(), microphone=(), geolocation=()"
   );
 
+  // Next.js 16 ships inline hydration bootstrap scripts. Tightening to
+  // script-src 'self' requires nonce-based CSP, which Next.js App Router
+  // doesn't wire out of the box — left as a follow-up (see docs/SECURITY.md).
+  // Until then: keep 'unsafe-inline'/'unsafe-eval' on scripts, but preserve
+  // the other defences (frame-ancestors, form-action, base-uri, no object-src).
   const csp = [
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
-    "font-src 'self'",
+    "font-src 'self' data:",
     "connect-src 'self' wss: ws:",
+    "object-src 'none'",
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -54,7 +60,9 @@ export function middleware(request: NextRequest) {
     return response;
   }
 
-  // Check for session cookie (Better Auth sets vigil.session_token, possibly signed)
+  // Check for session cookie (Better Auth sets vigil.session_token, possibly signed).
+  // NOTE: presence-only check — route handlers still run getSession() which hits
+  // the DB and rejects forged cookies. Middleware is defence-in-depth, not auth.
   const sessionCookie =
     request.cookies.get("vigil.session_token") ||
     request.cookies.get("better-auth.session_token") ||
@@ -63,17 +71,14 @@ export function middleware(request: NextRequest) {
 
   const hasSession = !!sessionCookie?.value;
 
-  // For API routes: also allow Bearer tokens (agent WebSocket auth)
-  const authHeader = request.headers.get("authorization") || "";
-  const hasBearer = authHeader.startsWith("Bearer ");
-
-  // Protect dashboard and API routes
+  // Protect dashboard and API routes. Agents never call these paths over HTTP
+  // (they use the /ws/agent WebSocket upgrade, which is handled separately),
+  // so no Bearer-token bypass is exposed here.
   if (pathname.startsWith("/dashboard") || pathname.startsWith("/api")) {
-    if (!hasSession && !hasBearer) {
+    if (!hasSession) {
       if (pathname.startsWith("/api")) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       }
-      // Redirect to login for dashboard pages
       const loginUrl = new URL("/login", request.url);
       loginUrl.searchParams.set("callbackUrl", pathname);
       return NextResponse.redirect(loginUrl);

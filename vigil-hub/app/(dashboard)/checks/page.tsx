@@ -6,6 +6,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { statusLabel, statusColor } from "@/lib/status";
 
 interface CheckRecord {
@@ -75,7 +76,8 @@ export default function ChecksPage() {
     setCfgDiskAlert("90"); setCfgBodyKeyword("");
   };
   const [creating, setCreating] = useState(false);
-  const { success: toastSuccess, error: toastError, confirm: showConfirm } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
+  const showConfirm = useConfirm();
 
   const fetchData = async () => {
     try {
@@ -119,7 +121,12 @@ export default function ChecksPage() {
   }, []);
 
   const handleDelete = async (id: string, name: string) => {
-    const confirmed = await showConfirm(`Delete check "${name}"? This cannot be undone.`);
+    const confirmed = await showConfirm({
+      title: "Delete Check",
+      message: `Delete check "${name}"? This cannot be undone.`,
+      confirmLabel: "Delete",
+      variant: "danger",
+    });
     if (!confirmed) return;
     try {
       const res = await fetch(`/api/checks/${id}`, { method: "DELETE" });
@@ -191,7 +198,7 @@ export default function ChecksPage() {
         setFormInterval("60");
         resetConfigFields();
         fetchData();
-        success("Check created successfully");
+        toastSuccess("Check created successfully");
       } else {
         const data = await res.json();
         toastError("Failed to create check", data.error);

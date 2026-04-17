@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/session";
+import { audit } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
   const session = await getSession(req);
@@ -38,6 +39,12 @@ export async function POST(req: NextRequest) {
     const user = await db.user.findUnique({
       where: { email: body.email },
       select: { id: true, email: true, name: true, role: true },
+    });
+
+    await audit(req, session.user.id, "user.invite", {
+      entityType: "user",
+      entityId: user?.id,
+      metadata: { email: body.email, role },
     });
 
     return NextResponse.json(user, { status: 201 });

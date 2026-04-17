@@ -2,6 +2,7 @@ import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getConnectedAgentIds } from "@/lib/ws-server";
+import { audit } from "@/lib/audit";
 
 
 
@@ -163,26 +164,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Agent not found" }, { status: 404 });
   }
 
-  const check = await db.check.create({
-    data: {
-      agentId: body.agentId,
-      name: body.name.trim(),
-      type: body.type,
-      config: body.config,
-      enabled: body.enabled ?? true,
-      intervalSecs,
-    },
-    select: {
-      id: true,
-      agentId: true,
-      name: true,
-      type: true,
-      config: true,
-      enabled: true,
-      intervalSecs: true,
-      createdAt: true,
-    },
-  });
+  let check;
+  try {
+    check = await db.check.create({
+      data: {
+        agentId: body.agentId,
+        name: body.name.trim(),
+        type: body.type,
+        config: body.config,
+        enabled: body.enabled ?? true,
+        intervalSecs,
+      },
+      select: {
+        id: true,
+        agentId: true,
+        name: true,
+        type: true,
+        config: true,
+        enabled: true,
+        intervalSecs: true,
+        createdAt: true,
+      },
+    });
+  } catch (err) {
+    // Unique-constraint violation on (agent_id, name) — surface as 409, not 500.
+    if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "P2002") {
+      return NextResponse.json(
+        { error: `A check named "${body.name.trim()}" already exists on this agent` },
+        { status: 409 },
+      );
+    }
+    throw err;
+  }
 
   // Push new check to agent if currently connected
   const connected = global._vigilAgents as Map<string, { ws: { send: (d: string) => void }, agentId: string }> | undefined;
@@ -198,6 +211,12 @@ export async function POST(req: NextRequest) {
       }],
     }));
   }
+
+  await audit(req, session.user.id, "check.create", {
+    entityType: "check",
+    entityId: check.id,
+    metadata: { name: check.name, type: check.type, agentId: check.agentId },
+  });
 
   return NextResponse.json(check, { status: 201 });
 }

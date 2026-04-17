@@ -1,4 +1,5 @@
 use super::{CheckResult, CheckStatus, Monitor, async_trait};
+use crate::net_safety;
 use chrono::Utc;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
@@ -24,6 +25,23 @@ impl PortMonitor {
 impl Monitor for PortMonitor {
     async fn check(&self) -> CheckResult {
         let addr = format!("{}:{}", self.host, self.port);
+
+        // Refuse scanning of internal hosts from a compromised Hub.
+        if !net_safety::host_allowed(&self.host) || !net_safety::safe_argv_target(&self.host) {
+            return CheckResult {
+                monitor_name: format!("port:{addr}"),
+                monitor_type: "port".to_string(),
+                status: CheckStatus::Unknown,
+                message: format!(
+                    "Refusing port probe to internal/private host {} (set VIGIL_ALLOW_INTERNAL_NET=1 to override)",
+                    self.host
+                ),
+                response_time_ms: None,
+                metadata: None,
+                timestamp: Utc::now(),
+            };
+        }
+
         let start = Instant::now();
 
         let result = tokio::time::timeout(self.timeout, TcpStream::connect(&addr)).await;

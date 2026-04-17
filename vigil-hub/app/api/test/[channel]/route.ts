@@ -1,8 +1,7 @@
-import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
-
 import nodemailer from "nodemailer";
-
+import { requireAdmin } from "@/lib/authz";
+import { assertExternalUrl, assertExternalHostname } from "@/lib/url-safety";
 
 const VALID_CHANNELS = [
   "smtp",
@@ -18,10 +17,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ channel: string }> },
 ) {
-  const session = await getSession(req);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
 
   const { channel } = await params;
   if (!VALID_CHANNELS.includes(channel)) {
@@ -71,6 +68,7 @@ async function testSmtp(config: Record<string, unknown>) {
       { status: 400 },
     );
   }
+  await assertExternalHostname(config.host as string);
 
   const transporter = nodemailer.createTransport({
     host: config.host as string,
@@ -109,6 +107,7 @@ async function testSlack(config: Record<string, unknown>) {
       { status: 400 },
     );
   }
+  await assertExternalUrl(config.webhookUrl);
 
   const res = await fetch(config.webhookUrl, {
     method: "POST",
@@ -137,6 +136,7 @@ async function testTeams(config: Record<string, unknown>) {
       { status: 400 },
     );
   }
+  await assertExternalUrl(config.webhookUrl);
 
   const res = await fetch(config.webhookUrl, {
     method: "POST",
@@ -176,6 +176,7 @@ async function testDiscord(config: Record<string, unknown>) {
       { status: 400 },
     );
   }
+  await assertExternalUrl(config.webhookUrl);
 
   const res = await fetch(config.webhookUrl, {
     method: "POST",
@@ -293,6 +294,7 @@ async function testGenericWebhook(config: Record<string, unknown>) {
       { status: 400 },
     );
   }
+  await assertExternalUrl(config.url);
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

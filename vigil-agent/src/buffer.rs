@@ -24,6 +24,18 @@ impl EventBuffer {
         // Keep the DB lean
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
 
+        // Buffered events may contain internal hostnames, cert subjects, etc.
+        // Restrict access to the owner of the agent process.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) =
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            {
+                tracing::warn!(error = %e, "Could not tighten permissions on buffer DB");
+            }
+        }
+
         Ok(Self { conn })
     }
 
@@ -57,7 +69,6 @@ impl EventBuffer {
     }
 
     /// Number of buffered events.
-    #[allow(dead_code)]
     pub fn count(&self) -> Result<usize> {
         let count: usize = self
             .conn

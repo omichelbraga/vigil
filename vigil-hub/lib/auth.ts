@@ -4,12 +4,31 @@ import { twoFactor } from "better-auth/plugins";
 import { db } from "./db";
 
 export const auth = betterAuth({
+  baseURL: process.env.BETTER_AUTH_URL || "http://localhost:3000",
+  trustedOrigins: [
+    "http://localhost:3000",
+    ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS
+      ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(",").map((s) => s.trim()).filter(Boolean)
+      : []),
+  ],
   database: prismaAdapter(db, {
     provider: "postgresql",
   }),
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
+  },
+  // Expose the custom `role` column on `users` in every session payload so the
+  // client can render admin-only UI (create monitor, admin nav, etc).
+  user: {
+    additionalFields: {
+      role: {
+        type: "string",
+        required: false,
+        defaultValue: "viewer",
+        input: false, // not settable via sign-up body; force-set server-side
+      },
+    },
   },
   session: {
     expiresIn: 60 * 60 * 24 * 7, // 7 days

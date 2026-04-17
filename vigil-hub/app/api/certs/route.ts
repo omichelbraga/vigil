@@ -2,6 +2,9 @@ import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { checkDomain } from "@/lib/cert-monitor";
+import { requireAdmin } from "@/lib/authz";
+import { assertExternalHostname } from "@/lib/url-safety";
+import { audit } from "@/lib/audit";
 
 
 
@@ -38,10 +41,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getSession(req);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object") {
@@ -67,6 +68,16 @@ export async function POST(req: NextRequest) {
   if (/\s/.test(host) || host.includes("://")) {
     return NextResponse.json(
       { error: "Domain must be a hostname without protocol (e.g. example.com)" },
+      { status: 400 },
+    );
+  }
+
+  // SSRF guard: reject loopback/RFC1918/link-local unless VIGIL_ALLOW_INTERNAL_NET=1
+  try {
+    await assertExternalHostname(host);
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Refused internal hostname" },
       { status: 400 },
     );
   }
@@ -111,6 +122,12 @@ export async function POST(req: NextRequest) {
       status: true,
       createdAt: true,
     },
+  });
+
+  await audit(req, auth.user.id, "cert.create", {
+    entityType: "cert",
+    entityId: cert.id,
+    metadata: { host: cert.host, port: cert.port },
   });
 
   // Immediately check the cert in the background

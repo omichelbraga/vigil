@@ -16,11 +16,34 @@ struct EnrollResponse {
     token: String,
 }
 
-pub async fn enroll(hub_url: &str, enrollment_token: &str) -> Result<(String, String)> {
+/// Enrol this host with the Hub.
+///
+/// TLS posture: certificate verification is **on** by default. Dev/lab setups
+/// with a self-signed Hub cert must pass `insecure_skip_verify = true`
+/// (wired from the `--insecure-skip-verify` CLI flag). This prevents the
+/// silent-MITM-at-enrollment attack that would otherwise leak the one-shot
+/// enrollment token AND the long-lived agent token in a single round trip.
+pub async fn enroll(
+    hub_url: &str,
+    enrollment_token: &str,
+    insecure_skip_verify: bool,
+) -> Result<(String, String)> {
     let http_url = hub_url
         .replace("wss://", "https://")
         .replace("ws://", "http://");
     let http_url = http_url.trim_end_matches("/");
+
+    if insecure_skip_verify {
+        tracing::warn!(
+            "TLS verification DISABLED for enrollment — only use this in trusted networks"
+        );
+    } else if http_url.starts_with("http://") {
+        // Plaintext enrollment is almost as bad as skipping TLS verification,
+        // so make it obvious in the log.
+        tracing::warn!(
+            "Enrolling over plaintext HTTP — tokens travel in the clear. Prefer https://."
+        );
+    }
 
     let hostname = sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
     let os = std::env::consts::OS.to_string();
@@ -28,7 +51,7 @@ pub async fn enroll(hub_url: &str, enrollment_token: &str) -> Result<(String, St
     let ip = get_local_ip().unwrap_or_else(|| "unknown".to_string());
 
     let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
+        .danger_accept_invalid_certs(insecure_skip_verify)
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
 
@@ -58,5 +81,5 @@ pub async fn enroll(hub_url: &str, enrollment_token: &str) -> Result<(String, St
 fn get_local_ip() -> Option<String> {
     let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?;
-    Some(socket.local_addr().ok()?.ip().to_string())
+    socket.local_addr().ok().map(|a| a.ip().to_string())
 }

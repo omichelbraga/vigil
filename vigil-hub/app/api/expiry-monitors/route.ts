@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { audit } from "@/lib/audit";
 
 function computeStatus(expiresAt: Date, warnDays: number): string {
   const days = Math.floor((expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
@@ -38,6 +39,12 @@ export async function POST(req: NextRequest) {
       warnDays: body.warnDays ?? 30,
       category: body.category || "other",
     },
+  });
+
+  await audit(req, session.user.id, "expiry.create", {
+    entityType: "expiry",
+    entityId: monitor.id,
+    metadata: { name: monitor.name, category: monitor.category, expiresAt: monitor.expiresAt.toISOString() },
   });
 
   return NextResponse.json({ ...monitor, daysRemaining: Math.floor((monitor.expiresAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24)), status: computeStatus(monitor.expiresAt, monitor.warnDays) }, { status: 201 });

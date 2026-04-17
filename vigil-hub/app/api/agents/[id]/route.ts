@@ -1,8 +1,8 @@
 import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-
-
+import { requireAdmin } from "@/lib/authz";
+import { audit } from "@/lib/audit";
 
 function isValidUUID(id: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -128,10 +128,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await getSession(req);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
   if (!isValidUUID(id)) {
@@ -198,6 +196,12 @@ export async function PATCH(
     },
   });
 
+  await audit(req, auth.user.id, "agent.update", {
+    entityType: "agent",
+    entityId: id,
+    metadata: { changedFields: Object.keys(data) },
+  });
+
   return NextResponse.json(updated);
 }
 
@@ -205,10 +209,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await getSession(req);
-  if (!session) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireAdmin(req);
+  if (!auth.ok) return auth.response;
 
   const { id } = await params;
   if (!isValidUUID(id)) {
@@ -225,6 +227,12 @@ export async function DELETE(
   await db.checkResult.deleteMany({ where: { agentId: id } });
   await db.alertHistory.deleteMany({ where: { agentId: id } });
   await db.agent.delete({ where: { id } });
+
+  await audit(req, auth.user.id, "agent.delete", {
+    entityType: "agent",
+    entityId: id,
+    metadata: { name: agent.name },
+  });
 
   return NextResponse.json({ message: "Agent deleted" });
 }

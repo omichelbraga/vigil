@@ -32,8 +32,35 @@ disk_alert_pct = 90.0
 "#
     );
 
-    std::fs::write(config_path, &content)?;
+    write_private(config_path, content.as_bytes())?;
     tracing::info!("Config written to: {}", config_path);
+    Ok(())
+}
+
+/// Write a file with owner-only permissions on Unix (0o600). On Windows we
+/// rely on inherited ACLs; services run as LocalSystem which restricts access
+/// to Administrators by default for files under %ProgramFiles%.
+#[cfg(unix)]
+fn write_private(path: &str, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(bytes)?;
+    // Ensure mode is 0600 even if the file pre-existed (OpenOptions::mode only
+    // applies on create).
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &str, bytes: &[u8]) -> Result<()> {
+    std::fs::write(path, bytes)?;
     Ok(())
 }
 
@@ -108,10 +135,48 @@ pub fn install_service(exe_path: &str, config_path: &str) -> Result<()> {
     let full_config = std::fs::canonicalize(config_path)
         .unwrap_or_else(|_| std::path::PathBuf::from(config_path));
 
+    // Hardened systemd unit: minimum privileges for a monitoring agent.
+    // ping needs CAP_NET_RAW on Linux (or setuid ping) — allowed via ambient cap.
+    // systemctl is-active works without elevated perms.
+    // WorkingDirectory is required: ProtectSystem=strict makes "/" read-only,
+    // and the SQLite buffer (relative path by default) would fail to open.
+    let config_dir = full_config
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "/var/lib/vigil-agent".to_string());
     let unit = format!(
-        "[Unit]\nDescription=Vigil Monitoring Agent\nAfter=network.target\n\n[Service]\nType=simple\nExecStart={exe} --config {config}\nRestart=always\nRestartSec=10\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n",
+        "[Unit]\n\
+         Description=Vigil Monitoring Agent\n\
+         After=network.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         WorkingDirectory={config_dir}\n\
+         ExecStart={exe} --config {config}\n\
+         Restart=always\n\
+         RestartSec=10\n\
+         StandardOutput=journal\n\
+         StandardError=journal\n\
+         NoNewPrivileges=yes\n\
+         ProtectSystem=strict\n\
+         ProtectHome=yes\n\
+         PrivateTmp=yes\n\
+         ProtectKernelTunables=yes\n\
+         ProtectKernelModules=yes\n\
+         ProtectControlGroups=yes\n\
+         RestrictNamespaces=yes\n\
+         RestrictSUIDSGID=yes\n\
+         LockPersonality=yes\n\
+         SystemCallArchitectures=native\n\
+         AmbientCapabilities=CAP_NET_RAW\n\
+         CapabilityBoundingSet=CAP_NET_RAW\n\
+         ReadWritePaths={config_dir}\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n",
         exe = exe_path,
-        config = full_config.display()
+        config = full_config.display(),
+        config_dir = config_dir,
     );
 
     std::fs::write("/etc/systemd/system/vigil-agent.service", unit)?;

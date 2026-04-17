@@ -1,6 +1,7 @@
 import * as tls from "tls";
 import { db } from "./db";
 import { processAlert } from "./alert-engine";
+import { assertExternalHostname } from "./url-safety";
 
 interface CertInfo {
   subject: string;
@@ -15,6 +16,8 @@ export async function checkDomain(
   domain: string,
   port: number = 443
 ): Promise<CertInfo> {
+  // Defensive SSRF guard: legacy rows may pre-date the /api/certs POST check.
+  await assertExternalHostname(domain);
   return new Promise((resolve, reject) => {
     const socket = tls.connect(
       {
@@ -84,7 +87,7 @@ export async function runCertChecks(): Promise<void> {
   let hubAgent = await db.agent.findFirst({ where: { name: "Vigil Hub" } });
   if (!hubAgent) {
     hubAgent = await db.agent.create({
-      data: { name: "Vigil Hub", token: "hub-internal", isActive: true },
+      data: { name: "Vigil Hub", tokenHash: "hub-internal", isActive: true },
     });
   }
 

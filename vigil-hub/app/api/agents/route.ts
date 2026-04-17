@@ -2,6 +2,7 @@ import { getSession } from "@/lib/session";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getConnectedAgentIds } from "@/lib/ws-server";
+import { audit } from "@/lib/audit";
 import argon2 from "argon2";
 import crypto from "crypto";
 
@@ -13,7 +14,7 @@ export async function GET(req: NextRequest) {
   }
 
   const agents = await db.agent.findMany({
-    where: { isActive: true },
+    where: { isActive: true, NOT: { tokenHash: "hub-internal" } },
     select: {
       id: true,
       name: true,
@@ -27,6 +28,8 @@ export async function GET(req: NextRequest) {
       autoUpdate: true,
       createdAt: true,
       updatedAt: true,
+      resultSigningPubkey: true,
+      resultSigningPubkeyPinnedAt: true,
       _count: { select: { checks: true } },
     },
     orderBy: { name: "asc" },
@@ -38,6 +41,12 @@ export async function GET(req: NextRequest) {
     last_seen: a.lastSeen,
     ip_address: a.ipAddress,
     check_count: a._count.checks,
+    // P6.4 — surface whether we've pinned a signing pubkey for this agent.
+    // Only ship a 16-char prefix; the full key has no business on the wire.
+    result_signing_pinned: a.resultSigningPubkey !== null,
+    result_signing_pubkey_prefix:
+      a.resultSigningPubkey?.slice(0, 16) ?? null,
+    result_signing_pinned_at: a.resultSigningPubkeyPinnedAt,
     status:
       a.status === "pending"
         ? "pending"
@@ -102,6 +111,12 @@ export async function POST(req: NextRequest) {
       throw e;
     }
   }
+
+  await audit(req, session.user.id, "agent.create", {
+    entityType: "agent",
+    entityId: agent.id,
+    metadata: { name: agent.name, autoUpdate: agent.autoUpdate },
+  });
 
   return NextResponse.json(
     { id: agent.id, name: agent.name, token },
