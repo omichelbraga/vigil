@@ -7,7 +7,7 @@ export async function runExpiryChecks(): Promise<{ checked: number; results: unk
   let hubAgent = await db.agent.findFirst({ where: { name: "Vigil Hub" } });
   if (!hubAgent) {
     hubAgent = await db.agent.create({
-      data: { name: "Vigil Hub", token: "hub-internal", isActive: true },
+      data: { name: "Vigil Hub", tokenHash: "hub-internal", isActive: true },
     });
   }
 
