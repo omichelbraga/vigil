@@ -10,6 +10,9 @@ import {
   Check,
   AlertTriangle,
   Activity,
+  ShieldCheck,
+  ShieldOff,
+  KeyRound,
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
@@ -26,6 +29,11 @@ interface Agent {
   ip_address?: string;
   last_seen?: string;
   check_count?: number;
+  /** True once the Hub has pinned an ed25519 signing pubkey (P6.4). */
+  result_signing_pinned?: boolean;
+  /** First 16 hex chars of the pinned pubkey — for admin debugging. */
+  result_signing_pubkey_prefix?: string | null;
+  result_signing_pinned_at?: string | null;
 }
 
 export default function AgentsPage() {
@@ -178,6 +186,33 @@ export default function AgentsPage() {
       success("Agent deleted");
     } catch (err) {
       toastError("Failed to delete agent", "Please try again");
+    }
+  };
+
+  // P6.4 — clear a pinned ed25519 signing pubkey so the agent re-pins on next
+  // connect. Admin-only endpoint; UI only exposes this if the agent is
+  // already pinned, since the alternative (unpinned) path is the default.
+  const handleResetSigningKey = async (id: string, name: string) => {
+    const ok = await confirm({
+      title: "Reset Signing Key",
+      message: `Clear the pinned ed25519 signing key for "${name}"? The agent's next register will pin a fresh key. Unsigned messages will be accepted during the grace window until that happens.`,
+      confirmLabel: "Reset",
+      variant: "danger",
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/admin/agents/${id}/reset-signing-key`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        success("Signing key reset");
+        fetchAgents();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        toastError("Failed to reset signing key", data.error ?? "");
+      }
+    } catch {
+      toastError("Failed to reset signing key", "Please try again");
     }
   };
 
@@ -447,6 +482,9 @@ export default function AgentsPage() {
                 <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
                   Checks
                 </th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">
+                  Signed
+                </th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">
                   Actions
                 </th>
@@ -507,6 +545,29 @@ export default function AgentsPage() {
                     {agent.check_count ?? 0}
                   </td>
                   <td className="px-4 py-3">
+                    {agent.result_signing_pinned ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400"
+                        title={
+                          agent.result_signing_pubkey_prefix
+                            ? `Pinned ed25519 key ${agent.result_signing_pubkey_prefix}…`
+                            : "Signed"
+                        }
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        <span className="text-xs font-medium">Yes</span>
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex items-center gap-1 text-gray-400 dark:text-gray-500"
+                        title="No signing key pinned — legacy or pre-grace agent"
+                      >
+                        <ShieldOff className="h-4 w-4" />
+                        <span className="text-xs">—</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
                       <a
                         href={`/agents/${agent.id}`}
@@ -515,6 +576,17 @@ export default function AgentsPage() {
                       >
                         <Eye className="h-4 w-4" />
                       </a>
+                      {agent.result_signing_pinned && (
+                        <button
+                          onClick={() =>
+                            handleResetSigningKey(agent.id, agent.name)
+                          }
+                          className="rounded-lg p-1.5 text-gray-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-950 dark:hover:text-amber-400"
+                          title="Reset agent signing key"
+                        >
+                          <KeyRound className="h-4 w-4" />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDelete(agent.id, agent.name)}
                         className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950 dark:hover:text-red-400"

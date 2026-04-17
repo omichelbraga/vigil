@@ -1,4 +1,26 @@
 import { db } from "./db";
+import { recordDelivery } from "./integrations";
+
+/**
+ * Lazy accessor for the SSE broadcast helper. Loaded on-demand so the
+ * alert-engine ↔ ws-server module pair doesn't share a static import cycle.
+ * ws-server imports this file at top level; if we imported ws-server back at
+ * top level, the bindings would still resolve (they're only called after
+ * init), but the lazy form removes any doubt and keeps initialization clean.
+ */
+let cachedBroadcast: ((event: string, data: unknown) => void) | null = null;
+async function emitSSE(event: string, data: unknown): Promise<void> {
+  try {
+    if (!cachedBroadcast) {
+      const mod: { broadcastSSE?: (event: string, data: unknown) => void } =
+        await import("./ws-server");
+      cachedBroadcast = mod.broadcastSSE ?? null;
+    }
+    cachedBroadcast?.(event, data);
+  } catch (err) {
+    console.warn("[alert] SSE broadcast failed:", err);
+  }
+}
 
 interface CheckContext {
   checkId: string;
@@ -58,11 +80,24 @@ export async function processAlert(ctx: CheckContext) {
       data: { delivered },
     });
 
+    // Push to the live notifications tray. Payload is intentionally trimmed:
+    // no raw channel config, no URLs, no secrets — just the display fields
+    // the browser tray needs to classify + navigate.
+    await emitSSE("incident_fired", {
+      checkId,
+      checkName,
+      agentName,
+      status,
+      message: message || `${checkName} is ${status}`,
+      firedAt: incident.firedAt.toISOString(),
+    });
+
   } else if (status === "ok" && openIncident) {
     // RECOVERED — resolve incident
+    const resolvedAt = new Date();
     await db.alertHistory.update({
       where: { id: openIncident.id },
-      data: { status: "resolved", resolvedAt: new Date() },
+      data: { status: "resolved", resolvedAt },
     });
 
     // Only send recovery notification if not suppressed (e.g. cert monitors)
@@ -76,6 +111,13 @@ export async function processAlert(ctx: CheckContext) {
         status,
       });
     }
+
+    await emitSSE("incident_resolved", {
+      checkId,
+      checkName,
+      agentName,
+      resolvedAt: resolvedAt.toISOString(),
+    });
   }
 }
 
@@ -127,23 +169,32 @@ async function sendNotification(n: Notification) {
   });
 
   for (const ch of channels) {
+    const config = ch.config as Record<string, unknown>;
+    const start = Date.now();
+    let httpStatus: number | null = null;
+    let deliveryError: string | null = null;
+
     try {
-      const config = ch.config as Record<string, unknown>;
       switch (ch.type) {
         case "teams":
-          await sendTeams(config.url as string, n, config);
+          httpStatus = await sendTeams(config.url as string, n, config);
           break;
         case "slack":
-          await sendSlack(config.url as string, n, config);
+          httpStatus = await sendSlack(config.url as string, n, config);
           break;
         case "discord":
-          await sendDiscord(config.url as string, n, config);
+          httpStatus = await sendDiscord(config.url as string, n, config);
           break;
         case "telegram":
-          await sendTelegram(config.token as string, config.chat_id as string, n, config);
+          httpStatus = await sendTelegram(
+            config.token as string,
+            config.chat_id as string,
+            n,
+            config,
+          );
           break;
         case "webhook":
-          await sendWebhook(config.url as string, n, config);
+          httpStatus = await sendWebhook(config.url as string, n, config);
           break;
         case "smtp":
           await sendSmtpAlert(config, n);
@@ -153,13 +204,30 @@ async function sendNotification(n: Notification) {
       }
       console.log(`[alert] ✅ Delivered to ${ch.name} (${ch.type})`);
     } catch (err) {
+      deliveryError = err instanceof Error ? err.message : String(err);
       console.error(`[alert] ❌ FAILED for ${ch.name} (${ch.type}):`, err);
     }
+
+    // Record the attempt regardless of outcome — powers the "Recent deliveries"
+    // log on /admin/integrations/[kind].
+    await recordDelivery({
+      channelId: ch.id,
+      status: deliveryError ? "failed" : "success",
+      title: n.title,
+      httpStatus,
+      lastError: deliveryError,
+      latencyMs: Date.now() - start,
+      attempts: 1,
+    });
   }
 }
 
-async function sendTeams(webhookUrl: string, n: Notification, config: Record<string, unknown>) {
-  if (!webhookUrl) return;
+async function sendTeams(
+  webhookUrl: string,
+  n: Notification,
+  config: Record<string, unknown>,
+): Promise<number | null> {
+  if (!webhookUrl) return null;
   const color = n.type === "alert" ? "attention" : "good";
   const defaultPayload = {
     type: "message",
@@ -181,15 +249,21 @@ async function sendTeams(webhookUrl: string, n: Notification, config: Record<str
       },
     }],
   };
-  await fetch(webhookUrl, {
+  const res = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildPayload(config, n, defaultPayload)),
   });
+  if (!res.ok) throw new Error(`Teams returned ${res.status}`);
+  return res.status;
 }
 
-async function sendSlack(webhookUrl: string, n: Notification, config: Record<string, unknown>) {
-  if (!webhookUrl) return;
+async function sendSlack(
+  webhookUrl: string,
+  n: Notification,
+  config: Record<string, unknown>,
+): Promise<number | null> {
+  if (!webhookUrl) return null;
   const defaultPayload = {
     text: `${n.title}\n${n.body}`,
     attachments: [{
@@ -200,15 +274,21 @@ async function sendSlack(webhookUrl: string, n: Notification, config: Record<str
       ],
     }],
   };
-  await fetch(webhookUrl, {
+  const res = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildPayload(config, n, defaultPayload)),
   });
+  if (!res.ok) throw new Error(`Slack returned ${res.status}`);
+  return res.status;
 }
 
-async function sendDiscord(webhookUrl: string, n: Notification, config: Record<string, unknown>) {
-  if (!webhookUrl) return;
+async function sendDiscord(
+  webhookUrl: string,
+  n: Notification,
+  config: Record<string, unknown>,
+): Promise<number | null> {
+  if (!webhookUrl) return null;
   const defaultPayload = {
     embeds: [{
       title: n.title,
@@ -221,19 +301,26 @@ async function sendDiscord(webhookUrl: string, n: Notification, config: Record<s
       timestamp: new Date().toISOString(),
     }],
   };
-  await fetch(webhookUrl, {
+  const res = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildPayload(config, n, defaultPayload)),
   });
+  if (!res.ok) throw new Error(`Discord returned ${res.status}`);
+  return res.status;
 }
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-async function sendTelegram(token: string, chatId: string, n: Notification, config: Record<string, unknown>) {
-  if (!token || !chatId) return;
+async function sendTelegram(
+  token: string,
+  chatId: string,
+  n: Notification,
+  config: Record<string, unknown>,
+): Promise<number | null> {
+  if (!token || !chatId) return null;
   const customPayload = config.custom_payload as string | undefined;
 
   // For Telegram: render template but HTML-escape all variable values
@@ -251,21 +338,29 @@ async function sendTelegram(token: string, chatId: string, n: Notification, conf
     ? renderTemplate(customPayload, { ...safe, type: n.type })
     : `${isRecovery ? "✅" : "🚨"} <b>${safe.title}</b>\n\n${safe.body}\n\n🖥 <b>Agent:</b> ${safe.agentName}\n🔍 <b>Check:</b> ${safe.checkName}\n${isRecovery ? "🟢" : "🔴"} <b>Status:</b> ${safe.status}`;
 
-  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
   });
+  if (!res.ok) throw new Error(`Telegram returned ${res.status}`);
+  return res.status;
 }
 
-async function sendWebhook(url: string, n: Notification, config: Record<string, unknown>) {
-  if (!url) return;
+async function sendWebhook(
+  url: string,
+  n: Notification,
+  config: Record<string, unknown>,
+): Promise<number | null> {
+  if (!url) return null;
   const defaultPayload = { ...n, timestamp: new Date().toISOString() };
-  await fetch(url, {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildPayload(config, n, defaultPayload)),
   });
+  if (!res.ok) throw new Error(`Webhook returned ${res.status}`);
+  return res.status;
 }
 
 async function sendSmtpAlert(config: Record<string, unknown>, n: Notification) {

@@ -7,27 +7,43 @@ import {
   Server,
   Shield,
   Bell,
-  Settings,
-  ClipboardCheck,
+  Radar,
   LogOut,
   Menu,
   X,
-  KeyRound,
+  Users,
+  FileText,
+  Activity,
+  Plug,
+  Package,
+  Rocket,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { signOut, useSession } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
-import { ToastProvider } from "@/components/ui/toast-provider";
-import { ConfirmProvider } from "@/components/ui/confirm-dialog";
+import { AvatarMenu } from "@/components/avatar-menu";
+import { NotificationsTray } from "@/components/notifications-tray";
 
-const navItems = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  adminOnly?: boolean;
+}
+
+const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/agents", label: "Agents", icon: Server },
-  { href: "/checks", label: "Checks", icon: ClipboardCheck },
-  { href: "/certificates", label: "Certificates", icon: Shield },
-  { href: "/expiry", label: "Expiry Monitors", icon: KeyRound },
+  { href: "/monitors", label: "Monitors", icon: Radar },
   { href: "/alerts", label: "Alerts", icon: Bell },
-  { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/admin/users", label: "Admin · Users", icon: Users, adminOnly: true },
+  { href: "/admin/audit", label: "Admin · Audit", icon: FileText, adminOnly: true },
+  { href: "/admin/integrations", label: "Admin · Integrations", icon: Plug, adminOnly: true },
+  { href: "/admin/system", label: "Admin · System", icon: Activity, adminOnly: true },
+  { href: "/admin/agent-releases", label: "Admin · Agent Releases", icon: Package, adminOnly: true },
+  { href: "/admin/rollouts", label: "Admin · Rollouts", icon: Rocket, adminOnly: true },
+  // Legacy /settings route is still reachable for bookmarks, but intentionally
+  // hidden from the sidebar — operators should use /admin/integrations instead.
 ];
 
 export default function DashboardLayout({
@@ -38,6 +54,25 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const { data: session } = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!session?.user) return;
+    let cancelled = false;
+    fetch("/api/profile")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { avatarUrl?: string | null } | null) => {
+        if (!cancelled && data && typeof data.avatarUrl === "string") {
+          setAvatarUrl(data.avatarUrl);
+        }
+      })
+      .catch(() => {
+        /* ignore — avatar is non-critical */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -79,7 +114,13 @@ export default function DashboardLayout({
 
         {/* Navigation */}
         <nav className="flex-1 space-y-1 px-3 py-4">
-          {navItems.map((item) => {
+          {navItems
+            .filter((item) =>
+              item.adminOnly
+                ? (session?.user as { role?: string } | undefined)?.role === "admin"
+                : true,
+            )
+            .map((item) => {
             const isActive =
               pathname === item.href || pathname?.startsWith(item.href + "/");
             return (
@@ -147,20 +188,15 @@ export default function DashboardLayout({
               )?.label || "Dashboard"}
             </h1>
           </div>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              {session?.user?.email}
-            </span>
+          <div className="flex items-center gap-2">
+            <NotificationsTray />
+            <AvatarMenu avatarUrl={avatarUrl} />
           </div>
         </header>
 
         {/* Content */}
         <main className="flex-1 overflow-y-auto p-6">
-          <ToastProvider>
-            <ConfirmProvider>
-              {children}
-            </ConfirmProvider>
-          </ToastProvider>
+          {children}
         </main>
       </div>
     </div>

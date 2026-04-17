@@ -24,12 +24,8 @@ export async function GET(
     );
   }
 
-  // Look for the latest active release matching os/arch
-  // Using a raw query approach via Prisma: check if AgentRelease model exists
-  // If not, we fall back to environment-based version info
   try {
-    // Attempt to query AgentRelease table (may not exist yet in early versions)
-    const release = await (db as any).agentRelease.findFirst({
+    const release = await db.agentRelease.findFirst({
       where: {
         os,
         arch,
@@ -42,8 +38,9 @@ export async function GET(
         os: true,
         arch: true,
         sha256: true,
-        size: true,
-        releaseNotes: true,
+        fileSize: true,
+        signature: true,
+        signedBy: true,
         createdAt: true,
       },
     });
@@ -55,9 +52,21 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(release);
+    // Agent auto-updater consumes `signature` + `signedBy` to verify
+    // authenticity before installing. Unsigned releases are returned with
+    // null fields so older agents keep working — agents decide policy.
+    return NextResponse.json({
+      id: release.id,
+      version: release.version,
+      os: release.os,
+      arch: release.arch,
+      sha256: release.sha256,
+      size: release.fileSize === null ? null : release.fileSize.toString(),
+      signature: release.signature,
+      signedBy: release.signedBy,
+      createdAt: release.createdAt.toISOString(),
+    });
   } catch {
-    // AgentRelease model may not exist yet — return version from env or 404
     const version = process.env.AGENT_VERSION;
     if (version) {
       return NextResponse.json({

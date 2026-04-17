@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 
 
 import { db } from "@/lib/db";
+import { addSSEClient } from "@/lib/ws-server";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,20 @@ export async function GET(req: NextRequest) {
       controller.enqueue(
         encoder.encode(`event: connected\ndata: ${JSON.stringify({ ts: new Date().toISOString() })}\n\n`),
       );
+
+      // Subscribe to the in-memory broadcaster used by the WebSocket server
+      // and the alert engine. This is what delivers `agent_status` (single),
+      // `agent_action`, and `incident_*` events to the browser in real time.
+      // The DB poller below continues to serve `check_result` events sourced
+      // from the results table.
+      const unsubscribeBroadcast = addSSEClient((event, json) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${json}\n\n`));
+        } catch {
+          // Controller closed; cleanup happens in abort handler.
+        }
+      });
 
       // Heartbeat every 15 seconds to keep the connection alive
       const heartbeat = setInterval(() => {
@@ -70,7 +85,7 @@ export async function GET(req: NextRequest) {
 
           // Poll for agent status changes
           const agents = await db.agent.findMany({
-            where: { isActive: true },
+            where: { isActive: true, NOT: { tokenHash: "hub-internal" } },
             select: {
               id: true,
               name: true,
@@ -102,6 +117,11 @@ export async function GET(req: NextRequest) {
         closed = true;
         clearInterval(heartbeat);
         clearInterval(poller);
+        try {
+          unsubscribeBroadcast();
+        } catch {
+          // Already unsubscribed
+        }
         try {
           controller.close();
         } catch {

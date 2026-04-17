@@ -62,8 +62,7 @@ export async function GET(
   }
 
   try {
-    // Try to find the release in the database
-    const release = await (db as any).agentRelease.findFirst({
+    const release = await db.agentRelease.findFirst({
       where: {
         os,
         arch,
@@ -74,8 +73,7 @@ export async function GET(
         id: true,
         version: true,
         filePath: true,
-        fileName: true,
-        size: true,
+        filename: true,
         sha256: true,
       },
     });
@@ -105,7 +103,8 @@ export async function GET(
     const webStream = Readable.toWeb(fileStream) as ReadableStream;
 
     const ext = os === "windows" ? ".exe" : "";
-    const fileName = release.fileName || `vigil-agent-${release.version}-${os}-${arch}${ext}`;
+    const fileName =
+      release.filename || `vigil-agent-${release.version}-${os}-${arch}${ext}`;
 
     const headers = new Headers({
       "Content-Type": "application/octet-stream",
