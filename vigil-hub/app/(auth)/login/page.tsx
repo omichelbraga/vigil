@@ -2,14 +2,19 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Shield } from "lucide-react";
-import { signIn } from "@/lib/auth-client";
+import { Shield, ArrowLeft } from "lucide-react";
+import { signIn, twoFactor } from "@/lib/auth-client";
 import { cn } from "@/lib/utils";
+
+type Step = "credentials" | "totp";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [step, setStep] = useState<Step>("credentials");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [trustDevice, setTrustDevice] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
@@ -36,14 +41,51 @@ export default function LoginPage() {
       const result = await signIn.email({ email, password });
       if (result.error) {
         setError(result.error.message || "Invalid email or password");
-      } else {
-        router.push("/dashboard");
+        return;
       }
+      // MFA-enabled accounts get {twoFactorRedirect: true} — advance to TOTP step.
+      // Better Auth sets a short-lived `vigil.two_factor` cookie that carries
+      // the pending auth context; the TOTP verify call uses it automatically.
+      const data = result.data as { twoFactorRedirect?: boolean } | undefined;
+      if (data?.twoFactorRedirect) {
+        setStep("totp");
+        return;
+      }
+      router.push("/dashboard");
     } catch {
       setError("An error occurred. Please try again.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleVerifyTotp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const code = totpCode.replace(/\s+/g, "");
+      if (code.length < 6) {
+        setError("Enter the 6-digit code from your authenticator app");
+        return;
+      }
+      const result = await twoFactor.verifyTotp({ code, trustDevice });
+      if (result.error) {
+        setError(result.error.message || "Invalid code. Try again.");
+        return;
+      }
+      router.push("/dashboard");
+    } catch {
+      setError("Verification failed. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleBackToCredentials = () => {
+    setStep("credentials");
+    setTotpCode("");
+    setError("");
   };
 
   const handleSocialSignIn = async (provider: "microsoft" | "google") => {
@@ -76,8 +118,13 @@ export default function LoginPage() {
         {/* Login Card */}
         <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            Sign in to your account
+            {step === "credentials" ? "Sign in to your account" : "Two-factor authentication"}
           </h2>
+          {step === "totp" && (
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Enter the 6-digit code from your authenticator app.
+            </p>
+          )}
 
           {error && (
             <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-400">
@@ -85,46 +132,93 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Email
+          {step === "credentials" ? (
+            <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  autoComplete="email"
+                  className={cn(inputClass, "mt-1")}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                  autoComplete="current-password"
+                  className={cn(inputClass, "mt-1")}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              >
+                {loading ? "Signing in..." : "Sign In"}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleVerifyTotp} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Authenticator code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
+                  required
+                  autoFocus
+                  autoComplete="one-time-code"
+                  className={cn(inputClass, "mt-1 text-center text-lg tracking-widest")}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={trustDevice}
+                  onChange={(e) => setTrustDevice(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                Trust this device for 30 days
               </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-                autoComplete="email"
-                className={cn(inputClass, "mt-1")}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
-                required
-                autoComplete="current-password"
-                className={cn(inputClass, "mt-1")}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
-            >
-              {loading ? "Signing in..." : "Sign In"}
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={loading || totpCode.length < 6}
+                className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+              >
+                {loading ? "Verifying..." : "Verify"}
+              </button>
+              <button
+                type="button"
+                onClick={handleBackToCredentials}
+                className="flex w-full items-center justify-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to sign in
+              </button>
+            </form>
+          )}
 
-          {/* Divider + Social Sign-in — only shown when at least one provider is enabled */}
-          {(googleEnabled || microsoftEnabled) && (
+          {/* Divider + Social Sign-in — only shown on credentials step when a provider is enabled */}
+          {step === "credentials" && (googleEnabled || microsoftEnabled) && (
             <>
               <div className="my-6 flex items-center gap-3">
                 <div className="h-px flex-1 bg-gray-200 dark:bg-gray-700" />
