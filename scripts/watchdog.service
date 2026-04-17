@@ -1,0 +1,19 @@
+[Unit]
+Description=Vigil Hub external watchdog (probe + alert)
+Documentation=https://github.com/omichelbraga/vigil
+# We intentionally do NOT declare After=vigil-hub.service — the whole
+# point of this unit is to run even when vigil-hub is down.
+
+[Service]
+Type=oneshot
+ExecStart=/home/michelbragaguimaraes/Documents/Projects/vigil/scripts/hub-watchdog.sh
+# Watchdog always exits 0; treat 1 as non-fatal too in case of future edits.
+SuccessExitStatus=0 1
+Nice=5
+NoNewPrivileges=true
+ProtectSystem=full
+# State + log default to /tmp so PrivateTmp must stay false.
+PrivateTmp=false
+
+[Install]
+WantedBy=default.target

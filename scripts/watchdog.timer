@@ -1,0 +1,16 @@
+[Unit]
+Description=Run Vigil Hub watchdog every minute
+Documentation=https://github.com/omichelbraga/vigil
+
+[Timer]
+# Fire once per minute, on the top of the minute.
+OnCalendar=minutely
+# If a tick was missed (laptop asleep, box rebooted), still run once.
+Persistent=true
+# Small jitter so concurrent external webhook calls don't stampede.
+RandomizedDelaySec=5
+AccuracySec=5s
+Unit=watchdog.service
+
+[Install]
+WantedBy=timers.target
