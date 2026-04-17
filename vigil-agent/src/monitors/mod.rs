@@ -1,7 +1,10 @@
 pub mod cert;
+pub mod event_log;
 pub mod http;
+pub mod logfile;
 pub mod ping;
 pub mod port;
+pub mod process;
 pub mod resource;
 pub mod service;
 

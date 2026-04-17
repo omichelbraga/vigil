@@ -26,6 +26,44 @@ pub struct Config {
 
     #[serde(default)]
     pub resource: ResourceConfig,
+
+    #[serde(default)]
+    pub allow_actions: AllowActions,
+}
+
+/// Operator-controlled allowlist for Hub-initiated actions. Defaults enable
+/// the three lightweight actions (run-now, silence, reload-config) and
+/// disable anything that can execute code on the host (service restart,
+/// script monitors, update-now).
+#[derive(Debug, Deserialize, Clone)]
+pub struct AllowActions {
+    #[serde(default = "default_true")]
+    pub run_check_now: bool,
+    #[serde(default = "default_true")]
+    pub silence_check: bool,
+    #[serde(default = "default_true")]
+    pub reload_config: bool,
+    /// Allowlist of systemd / Windows service unit names that may be
+    /// restarted. Empty = nothing allowed.
+    #[serde(default)]
+    pub service_restart: Vec<String>,
+    #[serde(default)]
+    pub script_monitors: bool,
+    #[serde(default)]
+    pub update_now: bool,
+}
+
+impl Default for AllowActions {
+    fn default() -> Self {
+        Self {
+            run_check_now: true,
+            silence_check: true,
+            reload_config: true,
+            service_restart: Vec::new(),
+            script_monitors: false,
+            update_now: false,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -56,6 +94,11 @@ pub struct ResourceConfig {
     pub ram_alert_pct: f32,
     #[serde(default = "default_disk_alert")]
     pub disk_alert_pct: f32,
+    /// How often the continuous resource sampler emits a datapoint (seconds).
+    /// This is independent of `check_interval_secs` and the threshold-based
+    /// `ResourceMonitor`; it drives time-series telemetry sent to the Hub.
+    #[serde(default = "default_sample_interval")]
+    pub sample_interval_secs: u64,
 }
 
 impl Default for ResourceConfig {
@@ -65,6 +108,7 @@ impl Default for ResourceConfig {
             cpu_alert_pct: default_cpu_alert(),
             ram_alert_pct: default_ram_alert(),
             disk_alert_pct: default_disk_alert(),
+            sample_interval_secs: default_sample_interval(),
         }
     }
 }
@@ -105,6 +149,7 @@ impl Default for Config {
             check_interval_secs: default_check_interval(),
             monitors: MonitorsConfig::default(),
             resource: ResourceConfig::default(),
+            allow_actions: AllowActions::default(),
         }
     }
 }
@@ -155,6 +200,10 @@ fn default_ram_alert() -> f32 {
 
 fn default_disk_alert() -> f32 {
     90.0
+}
+
+fn default_sample_interval() -> u64 {
+    10
 }
 
 fn hostname() -> String {
