@@ -50,7 +50,7 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncidentRow[] 
     },
   });
 
-  // If we have real incidents, return them.
+  // Primary path: return rows straight from the Incident table.
   if (incidents.length > 0) {
     const rows: IncidentRow[] = incidents.map((i) => ({
       id: i.id,
@@ -71,7 +71,9 @@ export async function GET(req: NextRequest): Promise<NextResponse<IncidentRow[] 
     return NextResponse.json(rows);
   }
 
-  // Fallback: derive pseudo-incidents from AlertHistory.
+  // Legacy fallback — remove once all existing data is migrated.
+  // Derive pseudo-incidents from AlertHistory so UI still shows historical
+  // alerts that predate the Incident dual-write.
   // Strategy: for each (checkId OR ruleId+agentId) group, find the most recent
   // "fired" entry. If a later "resolved"/"acknowledged" exists, reflect that.
   const alerts = await db.alertHistory.findMany({

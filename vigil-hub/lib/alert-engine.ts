@@ -36,25 +36,66 @@ interface CheckContext {
  * Called after every check result is saved.
  * Fires alert on first Critical/Warning, resolves when back to OK.
  * No rules required — works out of the box.
+ *
+ * Dual-writes to both the new `Incident` table and the legacy `AlertHistory`
+ * table. Readers can prefer `Incident`; `AlertHistory` is retained for
+ * backwards-compat with anything still reading it.
  */
 export async function processAlert(ctx: CheckContext) {
   const { checkId, checkName, agentId, agentName, status, message, skipRecovery } = ctx;
 
-  // Find open incident for this check
-  const openIncident = await db.alertHistory.findFirst({
-    where: { checkId, status: "fired" },
-    orderBy: { firedAt: "desc" },
-  });
+  // Find any open incident for this check. Prefer the new Incident table, but
+  // fall back to the legacy AlertHistory so we don't accidentally double-fire
+  // during the dual-write migration period.
+  const [openIncident, openAlertHistory] = await Promise.all([
+    db.incident.findFirst({
+      where: { checkId, status: "firing" },
+      orderBy: { firedAt: "desc" },
+    }),
+    db.alertHistory.findFirst({
+      where: { checkId, status: "fired" },
+      orderBy: { firedAt: "desc" },
+    }),
+  ]);
+  const hasOpen = Boolean(openIncident || openAlertHistory);
 
-  if ((status === "critical" || status === "warning") && !openIncident) {
-    // NEW INCIDENT — fire alert
-    const incident = await db.alertHistory.create({
+  if ((status === "critical" || status === "warning") && !hasOpen) {
+    // NEW INCIDENT — write to both tables.
+    const severity: "warning" | "critical" = status === "critical" ? "critical" : "warning";
+    const title = `${checkName} is ${severity}`;
+    const description = message || `${checkName} on agent ${agentName} is ${severity}`;
+
+    // The Incident table enforces FKs on checkId/agentId. Legacy AlertHistory
+    // did not, so we tolerate synthetic/unknown IDs by null-ing the Incident
+    // checkId when it's not a real row. AgentId must resolve — if it doesn't,
+    // we skip the Incident write (AlertHistory still captures the event).
+    const [checkExists, agentExists] = await Promise.all([
+      checkId ? db.check.findUnique({ where: { id: checkId }, select: { id: true } }) : null,
+      db.agent.findUnique({ where: { id: agentId }, select: { id: true } }),
+    ]);
+
+    const incidentRow = agentExists
+      ? await db.incident.create({
+          data: {
+            checkId: checkExists ? checkId : null,
+            agentId,
+            severity,
+            status: "firing",
+            title,
+            description,
+            metadata: { checkId, checkName, agentName },
+          },
+          select: { id: true, firedAt: true },
+        })
+      : null;
+
+    const legacyAlert = await db.alertHistory.create({
       data: {
         ruleId: await getOrCreateDefaultRule(),
         checkId,
         agentId,
         status: "fired",
-        message: message || `${checkName} is ${status}`,
+        message: description,
         channel: "auto",
         delivered: false,
       },
@@ -64,8 +105,8 @@ export async function processAlert(ctx: CheckContext) {
     try {
       await sendNotification({
         type: "alert",
-        title: `${checkName} is ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-        body: message || `${checkName} on agent ${agentName} is ${status}`,
+        title: `${checkName} is ${severity.charAt(0).toUpperCase() + severity.slice(1)}`,
+        body: description,
         agentName,
         checkName,
         status,
@@ -76,7 +117,7 @@ export async function processAlert(ctx: CheckContext) {
     }
 
     await db.alertHistory.update({
-      where: { id: incident.id },
+      where: { id: legacyAlert.id },
       data: { delivered },
     });
 
@@ -84,21 +125,31 @@ export async function processAlert(ctx: CheckContext) {
     // no raw channel config, no URLs, no secrets — just the display fields
     // the browser tray needs to classify + navigate.
     await emitSSE("incident_fired", {
+      incidentId: incidentRow?.id ?? null,
       checkId,
       checkName,
       agentName,
       status,
-      message: message || `${checkName} is ${status}`,
-      firedAt: incident.firedAt.toISOString(),
+      message: description,
+      firedAt: (incidentRow?.firedAt ?? new Date()).toISOString(),
     });
 
-  } else if (status === "ok" && openIncident) {
-    // RECOVERED — resolve incident
+  } else if (status === "ok" && hasOpen) {
+    // RECOVERED — resolve incident in both tables.
     const resolvedAt = new Date();
-    await db.alertHistory.update({
-      where: { id: openIncident.id },
-      data: { status: "resolved", resolvedAt },
-    });
+
+    if (openIncident) {
+      await db.incident.update({
+        where: { id: openIncident.id },
+        data: { status: "resolved", resolvedAt },
+      });
+    }
+    if (openAlertHistory) {
+      await db.alertHistory.update({
+        where: { id: openAlertHistory.id },
+        data: { status: "resolved", resolvedAt },
+      });
+    }
 
     // Only send recovery notification if not suppressed (e.g. cert monitors)
     if (!skipRecovery) {
@@ -113,6 +164,7 @@ export async function processAlert(ctx: CheckContext) {
     }
 
     await emitSSE("incident_resolved", {
+      incidentId: openIncident?.id ?? null,
       checkId,
       checkName,
       agentName,
