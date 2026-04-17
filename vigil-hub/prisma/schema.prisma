@@ -10,20 +10,29 @@ datasource db {
 // ── Better Auth tables ──────────────────────────────────
 
 model user {
-  id                 String    @id
-  name               String
-  email              String    @unique
-  emailVerified      Boolean   @default(false) @map("email_verified")
-  image              String?
-  role               String    @default("viewer") // admin, editor, viewer
-  twoFactorEnabled   Boolean   @default(false) @map("two_factor_enabled")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
+  id               String   @id
+  name             String
+  email            String   @unique
+  emailVerified    Boolean  @default(false) @map("email_verified")
+  image            String?
+  role             String   @default("viewer") // admin, editor, viewer
+  twoFactorEnabled Boolean  @default(false) @map("two_factor_enabled")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
-  sessions      session[]
-  accounts      account[]
-  twoFactor     twoFactor[]
-  auditLogs     AuditLog[]
+  // Extended profile fields
+  avatarUrl         String?   @map("avatar_url")
+  timezone          String?   @default("UTC")
+  locale            String?   @default("en")
+  notificationPrefs Json?     @map("notification_prefs")
+  disabledAt        DateTime? @map("disabled_at")
+  lastSignInAt      DateTime? @map("last_sign_in_at")
+
+  sessions  session[]
+  accounts  account[]
+  twoFactor twoFactor[]
+  auditLogs AuditLog[]
+  apiTokens ApiToken[]
 
   @@map("users")
 }
@@ -75,9 +84,9 @@ model verification {
 }
 
 model twoFactor {
-  id        String @id
-  userId    String @map("user_id")
-  secret    String
+  id          String @id
+  userId      String @map("user_id")
+  secret      String
   backupCodes String @map("backup_codes")
 
   user user @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -88,23 +97,45 @@ model twoFactor {
 // ── Application models ──────────────────────────────────
 
 model Agent {
-  id            String   @id @default(uuid())
-  name          String   @unique
-  tokenHash     String   @map("token_hash") // argon2 hash — never plaintext
-  lastSeen      DateTime? @map("last_seen")
-  version       String?
-  os            String?
-  hostname      String?
-  ipAddress     String?  @map("ip_address")
-  status        String   @default("active")
-  enrolledAt    DateTime? @map("enrolled_at")
-  isActive      Boolean  @default(true) @map("is_active")
-  autoUpdate    Boolean  @default(false) @map("auto_update")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id         String    @id @default(uuid())
+  name       String    @unique
+  tokenHash  String    @map("token_hash") // argon2 hash — never plaintext
+  lastSeen   DateTime? @map("last_seen")
+  version    String?
+  os         String?
+  hostname   String?
+  ipAddress  String?   @map("ip_address")
+  status     String    @default("active")
+  enrolledAt DateTime? @map("enrolled_at")
+  isActive   Boolean   @default(true) @map("is_active")
+  autoUpdate Boolean   @default(false) @map("auto_update")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
 
-  checks       Check[]
-  checkResults CheckResult[]
+  // Extended metadata
+  tags           String[]  @default([])
+  group          String?
+  runbookUrl     String?   @map("runbook_url")
+  disconnectedAt DateTime? @map("disconnected_at")
+
+  // Agent health telemetry (populated from health_report messages)
+  bufferDepth   Int?    @map("buffer_depth") // events queued in SQLite buffer
+  droppedEvents BigInt? @map("dropped_events") // cumulative drops since last restart
+  uptimeSecs    BigInt? @map("uptime_secs") // seconds since agent start
+
+  // Tamper-evident check results (P6.4). Agent generates a local ed25519 keypair
+  // at first run and sends the pubkey hex on register. Hub pins it on first sight;
+  // after pinning, invalid signatures are dropped + audited. A legacy grace
+  // window (first N days after signup) accepts unsigned results with a warning.
+  resultSigningPubkey         String?   @map("result_signing_pubkey") // 64 hex chars (32-byte ed25519)
+  resultSigningPubkeyPinnedAt DateTime? @map("result_signing_pubkey_pinned_at")
+
+  checks           Check[]
+  checkResults     CheckResult[]
+  incidents        Incident[]
+  resourceSamples  ResourceSample[]
+  inventory        AgentInventory?
+  rolloutAttempts  RolloutAttempt[]
 
   @@map("agents")
 }
@@ -113,16 +144,25 @@ model Check {
   id           String   @id @default(uuid())
   agentId      String   @map("agent_id")
   name         String
-  type         String   // service, port, http, ping, cert, process, resource
-  config       Json     // monitor-specific configuration
+  type         String // service, port, http, ping, cert, process, resource
+  config       Json // monitor-specific configuration
   enabled      Boolean  @default(true)
   intervalSecs Int      @default(30) @map("interval_secs")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
-  agent   Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
-  results CheckResult[]
+  // SLO and operational metadata
+  slo             Float?
+  runbookMarkdown String?   @map("runbook_markdown")
+  silencedUntil   DateTime? @map("silenced_until")
 
+  agent     Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  results   CheckResult[]
+  incidents Incident[]
+
+  // DB-level guard against duplicate checks (same agent + same display name).
+  // Prevents the "drain flush creates 10 copies under concurrency" class of bug.
+  @@unique([agentId, name])
   @@map("checks")
 }
 
@@ -130,14 +170,14 @@ model CheckResult {
   id             String   @id @default(uuid())
   checkId        String   @map("check_id")
   agentId        String   @map("agent_id")
-  status         String   // ok, warning, critical, unknown
+  status         String // ok, warning, critical, unknown
   message        String?
   responseTimeMs Int?     @map("response_time_ms")
   metadata       Json?
   timestamp      DateTime @default(now())
 
   check Check @relation(fields: [checkId], references: [id], onDelete: Cascade)
-  agent Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
 
   @@index([checkId, timestamp])
   @@index([agentId, timestamp])
@@ -147,43 +187,65 @@ model CheckResult {
 model AlertChannel {
   id        String   @id @default(uuid())
   name      String
-  type      String   // email, slack, webhook, pagerduty, teams, discord, telegram, twilio, generic
-  config    Json     // channel-specific config (urls, tokens, etc.) — encrypted values
+  type      String // email, slack, webhook, pagerduty, teams, discord, telegram, twilio, generic
+  config    Json // channel-specific config (urls, tokens, etc.) — encrypted values
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  rules AlertRule[]
+  rules      AlertRule[]
+  deliveries NotificationDelivery[]
 
   @@map("alert_channels")
 }
 
-model AlertRule {
-  id             String   @id @default(uuid())
-  name           String
-  channelId      String   @map("channel_id")
-  condition      Json     // e.g. { "status": "critical", "consecutiveCount": 3 }
-  enabled        Boolean  @default(true)
-  cooldownMinutes Int     @default(15) @map("cooldown_minutes")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+// Recent delivery attempts per channel — powers the /admin/integrations card
+// "Recent deliveries" log so operators can answer "why didn't Slack fire?".
+// Keep the table lean — trim rows older than 30 days via a scheduled job later.
+model NotificationDelivery {
+  id          BigInt   @id @default(autoincrement())
+  channelId   String   @map("channel_id")
+  incidentId  String?  @map("incident_id")
+  title       String?
+  status      String // success | failed | retrying
+  httpStatus  Int?     @map("http_status")
+  lastError   String?  @map("last_error")
+  attempts    Int      @default(1)
+  latencyMs   Int?     @map("latency_ms")
+  sentAt      DateTime @default(now()) @map("sent_at")
 
-  channel  AlertChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  history  AlertHistory[]
+  channel AlertChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, sentAt(sort: Desc)])
+  @@map("notification_deliveries")
+}
+
+model AlertRule {
+  id              String   @id @default(uuid())
+  name            String
+  channelId       String   @map("channel_id")
+  condition       Json // e.g. { "status": "critical", "consecutiveCount": 3 }
+  enabled         Boolean  @default(true)
+  cooldownMinutes Int      @default(15) @map("cooldown_minutes")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  channel AlertChannel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  history AlertHistory[]
 
   @@map("alert_rules")
 }
 
 model AlertHistory {
-  id        String   @id @default(uuid())
-  ruleId    String   @map("rule_id")
-  checkId   String?  @map("check_id")
-  agentId   String?  @map("agent_id")
-  status    String   // fired, resolved, acknowledged
-  message   String?
-  channel   String?  // channel type used
-  delivered Boolean  @default(false)
-  firedAt   DateTime @default(now()) @map("fired_at")
+  id         String    @id @default(uuid())
+  ruleId     String    @map("rule_id")
+  checkId    String?   @map("check_id")
+  agentId    String?   @map("agent_id")
+  status     String // fired, resolved, acknowledged
+  message    String?
+  channel    String? // channel type used
+  delivered  Boolean   @default(false)
+  firedAt    DateTime  @default(now()) @map("fired_at")
   resolvedAt DateTime? @map("resolved_at")
 
   rule AlertRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
@@ -194,44 +256,44 @@ model AlertHistory {
 }
 
 model BrandingConfig {
-  id          String   @id @default(uuid())
-  companyName String?  @map("company_name")
-  logoUrl     String?  @map("logo_url")
-  primaryColor String? @map("primary_color")
-  faviconUrl  String?  @map("favicon_url")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  id           String   @id @default(uuid())
+  companyName  String?  @map("company_name")
+  logoUrl      String?  @map("logo_url")
+  primaryColor String?  @map("primary_color")
+  faviconUrl   String?  @map("favicon_url")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   @@map("branding_config")
 }
 
 model CertMonitor {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   host        String
-  port        Int      @default(443)
-  warnDays    Int      @default(30) @map("warn_days")
-  enabled     Boolean  @default(true)
+  port        Int       @default(443)
+  warnDays    Int       @default(30) @map("warn_days")
+  enabled     Boolean   @default(true)
   lastChecked DateTime? @map("last_checked")
   expiresAt   DateTime? @map("expires_at")
   issuer      String?
-  status      String?  // valid, expiring, expired, error
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  status      String? // valid, expiring, expired, error
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 
   @@map("cert_monitors")
 }
 
 model AzureKeyVaultConfig {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   name         String
-  vaultUrl     String   @map("vault_url")
-  tenantId     String   @map("tenant_id")
-  clientId     String   @map("client_id")
-  clientSecret String   @map("client_secret") // encrypted at rest
-  enabled      Boolean  @default(true)
+  vaultUrl     String    @map("vault_url")
+  tenantId     String    @map("tenant_id")
+  clientId     String    @map("client_id")
+  clientSecret String    @map("client_secret") // encrypted at rest
+  enabled      Boolean   @default(true)
   lastSynced   DateTime? @map("last_synced")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
 
   @@map("azure_keyvault_configs")
 }
@@ -242,6 +304,7 @@ model AuditLog {
   action    String
   resource  String
   details   Json?
+  metadata  Json?
   ipAddress String?  @map("ip_address")
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -254,15 +317,68 @@ model AuditLog {
 
 model AgentRelease {
   id        String   @id @default(cuid())
-  os        String   // linux, windows
-  arch      String   // amd64, arm64
+  os        String // linux, windows
+  arch      String // amd64, arm64
   version   String
   sha256    String
   filename  String
+  filePath  String?  @map("file_path") // absolute path to binary on disk
   isActive  Boolean  @default(false) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Release-signing metadata (P6.3). `signature` is ed25519 over sha256 hex,
+  // `signedBy` is the 8-char fingerprint of the signing pubkey.
+  signature  String?
+  signedBy   String? @map("signed_by")
+  uploadedBy String? @map("uploaded_by") // user id of uploader
+  fileSize   BigInt? @map("file_size")
+
+  rollouts RolloutJob[]
+
   @@map("agent_releases")
+}
+
+// Staged fleet-update orchestration (P6.5). A RolloutJob picks agents via
+// targetFilter, updates them in batches, and optionally canaries one first.
+model RolloutJob {
+  id             String   @id @default(cuid())
+  releaseId      String   @map("release_id")
+  targetFilter   Json     @map("target_filter") // { os?, arch?, tags?, agentIds? }
+  batchSize      Int      @map("batch_size")
+  batchDelaySecs Int      @map("batch_delay_secs")
+  canaryAgentId  String?  @map("canary_agent_id")
+  status         String   @default("queued") // queued | running | paused | completed | failed
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  startedAt      DateTime? @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+  successCount   Int      @default(0) @map("success_count")
+  failureCount   Int      @default(0) @map("failure_count")
+
+  release  AgentRelease     @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  attempts RolloutAttempt[]
+
+  @@index([status, createdAt])
+  @@map("rollout_jobs")
+}
+
+model RolloutAttempt {
+  id             String   @id @default(cuid())
+  jobId          String   @map("job_id")
+  agentId        String   @map("agent_id")
+  status         String   @default("pending") // pending | in_progress | success | failed | skipped
+  versionBefore  String?  @map("version_before")
+  versionAfter   String?  @map("version_after")
+  error          String?
+  startedAt      DateTime @default(now()) @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+
+  job   RolloutJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  agent Agent      @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, status])
+  @@index([agentId, startedAt(sort: Desc)])
+  @@map("rollout_attempts")
 }
 
 model SmtpConfig {
@@ -271,7 +387,7 @@ model SmtpConfig {
   port      Int      @default(587)
   secure    Boolean  @default(false)
   user      String?
-  pass      String?  // encrypted at rest
+  pass      String? // encrypted at rest
   fromEmail String   @map("from_email")
   enabled   Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
@@ -296,6 +412,7 @@ model EnrollmentToken {
   agentId   String?   @map("agent_id")
   createdBy String?   @map("created_by")
   createdAt DateTime  @default(now()) @map("created_at")
+
   @@map("enrollment_tokens")
 }
 
@@ -312,4 +429,85 @@ model ExpiryMonitor {
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   @@map("expiry_monitors")
+}
+
+// ── New models ──────────────────────────────────────────
+
+model ApiToken {
+  id          String    @id @default(cuid())
+  userId      String    @map("user_id")
+  name        String
+  tokenHash   String    @map("token_hash") // argon2 hash — never store plaintext
+  tokenPrefix String    @map("token_prefix") // first 8 chars of plaintext, for display
+  scopes      String[]  @default([]) // "read", "write", "admin"
+  lastUsedAt  DateTime? @map("last_used_at")
+  expiresAt   DateTime? @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  user user @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("api_tokens")
+}
+
+model Incident {
+  id                 String    @id @default(cuid())
+  checkId            String?   @map("check_id")
+  agentId            String    @map("agent_id")
+  severity           String // "warning", "critical"
+  status             String    @default("firing") // "firing", "acknowledged", "resolved"
+  title              String
+  description        String?
+  firedAt            DateTime  @default(now()) @map("fired_at")
+  acknowledgedAt     DateTime? @map("acknowledged_at")
+  acknowledgedBy     String?   @map("acknowledged_by") // userId
+  resolvedAt         DateTime? @map("resolved_at")
+  assigneeId         String?   @map("assignee_id")
+  postmortemMarkdown String?   @map("postmortem_markdown")
+  metadata           Json?
+
+  agent Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  check Check? @relation(fields: [checkId], references: [id], onDelete: SetNull)
+
+  @@index([status, firedAt])
+  @@index([agentId, firedAt])
+  @@map("incidents")
+}
+
+model ResourceSample {
+  id        BigInt   @id @default(autoincrement())
+  agentId   String   @map("agent_id")
+  timestamp DateTime @default(now())
+  cpuPct    Float?   @map("cpu_pct")
+  ramPct    Float?   @map("ram_pct")
+  diskPct   Float?   @map("disk_pct")
+  loadAvg1  Float?   @map("load_avg_1")
+  netRxBps  BigInt?  @map("net_rx_bps")
+  netTxBps  BigInt?  @map("net_tx_bps")
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, timestamp(sort: Desc)])
+  @@map("resource_samples")
+}
+
+model AgentInventory {
+  id             String    @id @default(cuid())
+  agentId        String    @unique @map("agent_id")
+  arch           String?
+  kernel         String?
+  cpuModel       String?   @map("cpu_model")
+  cpuCount       Int?      @map("cpu_count")
+  totalRamBytes  BigInt?   @map("total_ram_bytes")
+  totalDiskBytes BigInt?   @map("total_disk_bytes")
+  disks          Json? // array of {mount, fsType, totalBytes, freeBytes}
+  nics           Json? // array of {name, mac, ipv4[], ipv6[]}
+  bootTime       DateTime? @map("boot_time")
+  container      String? // runtime name if detected: docker/podman/lxc/kubernetes/null
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("agent_inventories")
 }
