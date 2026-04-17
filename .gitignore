@@ -42,3 +42,9 @@ npm-debug.log*
 *.dll
 *.so
 *.dylib
+
+# Leftovers from running next build from project root
+.next/
+
+# Tooling state
+.claude/
