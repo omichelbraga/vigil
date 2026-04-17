@@ -4,6 +4,8 @@ import next from "next";
 import { setupWebSocket } from "./lib/ws-server";
 import { runCertChecks } from "./lib/cert-monitor";
 import { runExpiryChecks } from "./lib/expiry-monitor";
+import { markJobRun } from "./lib/system-metrics";
+import { startRolloutRunner } from "./lib/rollout-runner";
 
 // Catch unhandled errors so they appear in /tmp/vigil-hub.log
 process.on("unhandledRejection", (reason) => {
@@ -30,12 +32,26 @@ app.prepare().then(() => {
   setupWebSocket(server);
 
   // Run cert checks on startup + every hour
-  runCertChecks().catch(console.error);
-  setInterval(() => runCertChecks().catch(console.error), 60 * 60 * 1000);
+  const doCert = (): void => {
+    runCertChecks()
+      .then(() => markJobRun("cert"))
+      .catch(console.error);
+  };
+  doCert();
+  setInterval(doCert, 60 * 60 * 1000);
 
   // Run expiry monitor checks on startup + every 6 hours
-  runExpiryChecks().catch(console.error);
-  setInterval(() => runExpiryChecks().catch(console.error), 6 * 60 * 60 * 1000);
+  const doExpiry = (): void => {
+    runExpiryChecks()
+      .then(() => markJobRun("expiry"))
+      .catch(console.error);
+  };
+  doExpiry();
+  setInterval(doExpiry, 6 * 60 * 60 * 1000);
+
+  // P6.5 — staged rollout orchestrator. Ticks every 30s; dispatches `update_now`
+  // to connected agents in controlled batches and reconciles attempt status.
+  startRolloutRunner();
 
   server.listen(port, hostname, () => {
     console.log(`> Vigil Hub ready on http://${hostname}:${port}`);
