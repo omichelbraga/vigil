@@ -26,9 +26,13 @@ SHA=$(sha256sum "$BIN" | awk '{print $1}')
 
 PUBKEY_HEX="$(cat "${VIGIL_UPDATE_PUBKEY_FILE:-$HOME/.config/vigil/update-pubkey.hex}" | tr -d '[:space:]')"
 
-exec node --input-type=module -e "
-import { readFileSync } from 'fs';
-import { createPrivateKey, sign, createHash } from 'crypto';
+# CommonJS, not ESM — `node --input-type=module -e` requires Node 12+ and the
+# self-hosted runner image (myoung34/github-runner) ships an older node that
+# rejects --input-type entirely. `node -e` defaults to CJS, which works
+# everywhere.
+exec node -e "
+const { readFileSync } = require('fs');
+const { createPrivateKey, sign, createHash } = require('crypto');
 const priv = createPrivateKey({ key: readFileSync('$KEY'), format: 'pem', type: 'pkcs8' });
 const sigBuf = sign(null, Buffer.from('$SHA', 'utf8'), priv);
 const rawPub = Buffer.from('$PUBKEY_HEX', 'hex');
