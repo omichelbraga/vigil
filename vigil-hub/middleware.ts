@@ -60,16 +60,23 @@ export function middleware(request: NextRequest) {
     return response;
   }
 
-  // Check for session cookie (Better Auth sets vigil.session_token, possibly signed).
-  // NOTE: presence-only check — route handlers still run getSession() which hits
-  // the DB and rejects forged cookies. Middleware is defence-in-depth, not auth.
+  // Presence-only auth signal. Two paths accepted:
+  //   1. Better Auth session cookie (vigil.session_token, possibly signed) —
+  //      the normal browser flow.
+  //   2. `Authorization: Bearer vgl_…` personal API token — CLI / CI / scripts.
+  // The actual verify happens in the route handler via getSession(); middleware
+  // is defence-in-depth, not the source of truth. Without this Bearer check
+  // every API-token call to /api/* would 401 here before reaching the handler.
   const sessionCookie =
     request.cookies.get("vigil.session_token") ||
     request.cookies.get("better-auth.session_token") ||
     request.cookies.get("__Secure-vigil.session_token") ||
     request.cookies.get("__Secure-better-auth.session_token");
 
-  const hasSession = !!sessionCookie?.value;
+  const authHeader = request.headers.get("authorization") ?? "";
+  const hasBearerToken = /^Bearer\s+vgl_[A-Za-z0-9_-]+$/.test(authHeader);
+
+  const hasSession = !!sessionCookie?.value || hasBearerToken;
 
   // Protect dashboard and API routes. Agents never call these paths over HTTP
   // (they use the /ws/agent WebSocket upgrade, which is handled separately),
