@@ -38,18 +38,29 @@ RUN npm run build --workspace vigil-hub
 
 # ===== runner stage =====
 FROM node:20-alpine AS runner
-WORKDIR /app
 ENV NODE_ENV=production
 RUN addgroup -g 1001 nodejs && adduser -S -u 1001 nextjs
 
-# Next.js standalone bundle. Standalone preserves the workspace structure,
-# so the runnable server is at vigil-hub/.next/standalone/vigil-hub/.
-COPY --from=builder /app/vigil-hub/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/standalone/vigil-hub/ ./
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/standalone/node_modules ./node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/static ./.next/static
-COPY --from=builder /app/vigil-hub/prisma ./prisma
+# Preserve Next.js's standalone layout intact. The standalone bundle is
+# already shaped for direct execution:
+#   /app/node_modules/                   ← hoisted workspace-root deps
+#   /app/vigil-hub/server.js             ← entrypoint
+#   /app/vigil-hub/.next/...             ← compiled code + symlinks that
+#                                          point at ../../../../vigil-hub/
+#                                          node_modules/@prisma/client
+#   /app/vigil-hub/node_modules/...      ← member deps; @prisma/client lives
+#                                          here and the satellite symlink
+#                                          resolves to it
+# Flattening this layout (the previous approach) broke the Prisma 6 hash-
+# suffixed client symlink — `Cannot find module @prisma/client-<hash>`.
+COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/standalone /app
+# public/ and .next/static are not part of the standalone trace.
+COPY --from=builder /app/vigil-hub/public /app/vigil-hub/public
+COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/static /app/vigil-hub/.next/static
+# Prisma schema kept alongside the runnable bundle for diagnostics.
+COPY --from=builder /app/vigil-hub/prisma /app/vigil-hub/prisma
 
+WORKDIR /app/vigil-hub
 USER nextjs
 EXPOSE 3000
 # Bind Next.js's standalone server to all interfaces. Without this it picks
