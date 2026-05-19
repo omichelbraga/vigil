@@ -16,6 +16,19 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot ownership fix for the named volumes. Docker named volumes are
+  # root-owned on first creation, which conflicts with vigil-hub's USER
+  # nextjs (uid 1001) — writes fail with EACCES. Runs as uid 0, chowns the
+  # mount points to 1001:1001, exits. Re-runs harmlessly on every deploy.
+  vigil-volume-init:
+    image: alpine:3
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 1001:1001 /app/binaries /app/public/uploads"]
+    volumes:
+      - uploads:/app/public/uploads
+      - binaries:/app/binaries
+    restart: "no"
+
   # One-shot migration sidecar. Uses the Dockerfile's `builder` stage so it
   # has the full prisma CLI dependency graph (including hoisted transitives
   # the runner stage doesn't carry). Applies the schema via `prisma db push`,
@@ -82,6 +95,8 @@ services:
       postgres:
         condition: service_healthy
       vigil-migrate:
+        condition: service_completed_successfully
+      vigil-volume-init:
         condition: service_completed_successfully
     networks:
       default:
