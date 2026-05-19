@@ -314,6 +314,13 @@ jobs:
         if: steps.gate.outputs.skip != '1'
         run: |
           set -euo pipefail
+          # The job-level VIGIL_UPDATE_SIGNING_KEY env var holds the PEM
+          # contents (so the staging step could write them to disk), but
+          # scripts/sign-release.sh reads the same variable as a path to the
+          # PEM file. Unset here so the script falls back to its default
+          # ~/.config/vigil/update-signing-key.pem — the path the staging
+          # step actually wrote to.
+          unset VIGIL_UPDATE_SIGNING_KEY
           VER=$(grep '^version' vigil-agent/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 
           for entry in "linux:vigil-agent-linux-amd64-${VER}" "windows:vigil-agent-windows-amd64-${VER}.exe"; do
