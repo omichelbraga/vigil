@@ -52,6 +52,11 @@ COPY --from=builder /app/vigil-hub/prisma ./prisma
 
 USER nextjs
 EXPOSE 3000
+# Bind Next.js's standalone server to all interfaces. Without this it picks
+# the container's own hostname (e.g. "5015036523f2") and only listens on
+# that interface — both the HEALTHCHECK (wget http://localhost:3000) and
+# Docker's NAT port-forward (0.0.0.0 → container) fail with ECONNREFUSED.
+ENV HOSTNAME=0.0.0.0
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD wget -qO- http://localhost:3000/api/health || exit 1
 # Migrations run in a separate one-shot sidecar service (see docker-compose
