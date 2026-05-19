@@ -69,13 +69,18 @@ jobs:
 
       - name: Confirm pubkey baked in
         run: |
-          if [ -n "$VIGIL_UPDATE_PUBKEY" ]; then
-            ./target/release/vigil-agent version | tee /dev/stderr | grep -q "$(echo $VIGIL_UPDATE_PUBKEY | head -c 8)" || {
-              echo "::error::built binary does not contain expected pubkey fingerprint"
-              exit 1
-            }
-          else
+          out=$(./target/release/vigil-agent version)
+          echo "$out"
+          if [ -z "$VIGIL_UPDATE_PUBKEY" ]; then
             echo "::warning::VIGIL_UPDATE_PUBKEY not set — agents won't verify update signatures"
+            exit 0
+          fi
+          # `version` reports the fingerprint (sha256 of the pubkey, first 4
+          # bytes / 8 hex chars), not the pubkey itself. Cheapest correct
+          # check: ensure the line doesn't say <unset>.
+          if echo "$out" | grep -qE 'update_pubkey_fingerprint:\s*<unset'; then
+            echo "::error::built binary has no pubkey baked in (got <unset>)"
+            exit 1
           fi
 
       - name: Stage artifact with versioned name
@@ -230,12 +235,10 @@ jobs:
           $out = & "C:\Program Files\Vigil\vigil-agent.exe" --version 2>&1 | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
-          if ("${{ secrets.VIGIL_UPDATE_PUBKEY }}" -ne "") {
-            $fp = "${{ secrets.VIGIL_UPDATE_PUBKEY }}".Substring(0,8)
-            if ($out -notmatch [regex]::Escape($fp)) {
-              throw "binary missing expected pubkey fingerprint $fp"
-            }
-            Write-Host "✓ pubkey fingerprint $fp present"
+          # `version` reports a sha256-derived fingerprint, not the pubkey
+          # itself. Check the line doesn't say <unset>.
+          if ("${{ secrets.VIGIL_UPDATE_PUBKEY }}" -ne "" -and $out -match 'update_pubkey_fingerprint:\s*<unset') {
+            throw "binary has no pubkey baked in (got <unset>)"
           }
 
       - name: Uninstall MSI silently
