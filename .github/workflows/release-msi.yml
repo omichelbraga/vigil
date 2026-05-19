@@ -1,14 +1,29 @@
-# Build the Windows MSI installer for vigil-agent + vigil-tray.
+# Build + publish vigil-agent releases across Windows + Linux.
 #
 # Triggers:
-#   - On push of a v* tag → builds, uploads artifact, attaches to GitHub Release.
-#   - Manual via workflow_dispatch → builds and uploads artifact only.
+#   - On push of a v* tag → builds everything, attaches MSI to GitHub Release,
+#     and (if Hub secrets are set) signs + uploads the bare .exe and ELF
+#     binaries to the Hub's exe-update channel.
+#   - Manual via workflow_dispatch → builds and uploads artifacts only.
 #
-# Output: vigil-agent-<version>-x86_64.msi (cargo-wix default naming).
+# Artifacts produced per tag:
+#   - vigil-agent-<version>-x86_64.msi          (Windows installer, GH Release)
+#   - vigil-agent-windows-amd64-<version>.exe   (bare binary, GH Release + Hub)
+#   - vigil-agent-linux-amd64-<version>         (bare binary, GH Release + Hub)
 #
-# Note on code-signing: the resulting MSI is NOT Authenticode-signed (no cert
-# available yet). Windows SmartScreen will warn on first install. See
-# docs/INSTALLER.md for the gap and remediation path.
+# Required secrets for full publish:
+#   VIGIL_UPDATE_PUBKEY        64-hex ed25519 public key — baked into all
+#                              agent builds at compile time so installed
+#                              agents can verify signed auto-updates.
+#   VIGIL_UPDATE_SIGNING_KEY   PKCS8 PEM private key (full file contents) used
+#                              to sign each bare binary post-build.
+#   VIGIL_HUB_URL              e.g. https://vigil.san-marcos.net — target Hub
+#                              for the auto-upload step.
+#   VIGIL_HUB_API_TOKEN        Admin-scoped personal API token (`vgl_…`) used
+#                              to POST signed releases to the Hub.
+#
+# Code-signing on the MSI itself is still a separate concern (Authenticode,
+# requires a real cert). See docs/INSTALLER.md.
 name: release-msi
 
 on:
@@ -16,30 +31,82 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      version_override:
-        description: "Override version in MSI name (default: read from Cargo.toml)"
-        required: false
-        default: ""
 
 permissions:
-  contents: write  # needed to attach the MSI to a GitHub Release
+  contents: write # needed to attach artifacts to GitHub Release
 
 jobs:
+  # ─── Linux bare binary ──────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VIGIL_UPDATE_PUBKEY: ${{ secrets.VIGIL_UPDATE_PUBKEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-release
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Cache target/
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}-release
+          restore-keys: ${{ runner.os }}-target-
+
+      - name: Build vigil-agent (release, with pubkey baked in)
+        run: cargo build --release -p vigil-agent
+
+      - name: Confirm pubkey baked in
+        run: |
+          if [ -n "$VIGIL_UPDATE_PUBKEY" ]; then
+            ./target/release/vigil-agent version | tee /dev/stderr | grep -q "$(echo $VIGIL_UPDATE_PUBKEY | head -c 8)" || {
+              echo "::error::built binary does not contain expected pubkey fingerprint"
+              exit 1
+            }
+          else
+            echo "::warning::VIGIL_UPDATE_PUBKEY not set — agents won't verify update signatures"
+          fi
+
+      - name: Stage artifact with versioned name
+        run: |
+          VER=$(grep '^version' vigil-agent/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          mkdir -p dist
+          cp target/release/vigil-agent "dist/vigil-agent-linux-amd64-${VER}"
+          ls -l dist/
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-agent-linux-amd64
+          path: dist/vigil-agent-linux-amd64-*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─── Windows bare binary + tray + MSI ───────────────────────────────────
   build-msi:
     runs-on: windows-latest
     timeout-minutes: 30
-
+    env:
+      VIGIL_UPDATE_PUBKEY: ${{ secrets.VIGIL_UPDATE_PUBKEY }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust stable (msvc)
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      # Cache cargo registry + the cargo-wix install across runs.
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -48,22 +115,15 @@ jobs:
             ~/.cargo/git
             ~/.cargo/bin/cargo-wix.exe
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-wix
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Cache target/
         uses: actions/cache@v4
         with:
           path: target
           key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}-msi
-          restore-keys: |
-            ${{ runner.os }}-target-
+          restore-keys: ${{ runner.os }}-target-
 
-      # WiX 3.14 is required by cargo-wix 0.3.x. GitHub's windows-latest image
-      # ships it pre-installed at C:\Program Files (x86)\WiX Toolset v3.14\,
-      # so we only fall back to `choco install` if it's missing — pinning
-      # --version against an already-present image build (e.g. 3.14.1.20250415)
-      # otherwise errors as a downgrade.
       - name: Ensure WiX Toolset 3.14
         run: |
           $wixBin = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
@@ -83,18 +143,12 @@ jobs:
             Write-Host "cargo-wix already cached"
           }
 
-      # Build both binaries that the MSI bundles. vigil-tray needs the
-      # `windows-all` feature so the tray + HUD code is compiled in.
-      - name: Build vigil-agent (release)
+      - name: Build vigil-agent (release, with pubkey baked in)
         run: cargo build --release --target x86_64-pc-windows-msvc -p vigil-agent
 
       - name: Build vigil-tray (release, windows-all)
         run: cargo build --release --target x86_64-pc-windows-msvc -p vigil-tray --features windows-all
 
-      # cargo wix runs candle + light against vigil-agent/wix/main.wxs.
-      # The WixUtilExtension load is declared in
-      # vigil-agent/Cargo.toml [package.metadata.wix] (compiler-args /
-      # linker-args), so the CLI invocation stays minimal here.
       - name: Build MSI
         working-directory: vigil-agent
         run: |
@@ -105,11 +159,13 @@ jobs:
             --target x86_64-pc-windows-msvc `
             -o ../target/wix
 
-      - name: List MSI output
+      - name: Stage bare .exe with versioned name
+        shell: pwsh
         run: |
-          Get-ChildItem -Recurse target/wix -Filter *.msi |
-            Select-Object FullName, Length |
-            Format-Table
+          $ver = (Select-String -Path vigil-agent/Cargo.toml -Pattern '^version' | Select-Object -First 1).Line -replace '.*"(.*)".*','$1'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\vigil-agent.exe "dist\vigil-agent-windows-amd64-$ver.exe"
+          Get-ChildItem dist
 
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
@@ -119,26 +175,30 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # Attach to GitHub Release when triggered by a tag push.
-      - name: Attach MSI to GitHub Release
+      - name: Upload bare Windows .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-agent-windows-amd64
+          path: dist/vigil-agent-windows-amd64-*.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach MSI + bare .exe to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: target/wix/*.msi
+          files: |
+            target/wix/*.msi
+            dist/vigil-agent-windows-amd64-*.exe
           fail_on_unmatched_files: true
 
-  # Smoke test: silently install the MSI (without enrollment), assert the
-  # expected file layout, exercise the binary, then uninstall and assert
-  # cleanup. The service-registration custom actions are NOT exercised here
-  # because they require a live Hub to enroll against — covered by
-  # tests/path_resolution.rs and manual integration runs.
+  # ─── MSI install/uninstall smoke (unchanged from before) ────────────────
   smoke-install:
     needs: build-msi
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
-      - name: Download MSI artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: vigil-agent-msi
           path: msi
@@ -149,62 +209,48 @@ jobs:
         run: |
           $msi = Get-ChildItem msi -Filter *.msi | Select-Object -First 1
           if (-not $msi) { throw "no MSI in artifact" }
-          Write-Host "Found: $($msi.FullName)"
           "msi_path=$($msi.FullName)" >> $env:GITHUB_OUTPUT
 
       - name: Install MSI silently (no enrollment)
         shell: pwsh
         run: |
           $log = "install.log"
-          $p = Start-Process msiexec.exe `
-            -ArgumentList "/i", "${{ steps.locate.outputs.msi_path }}", "/qn", "/l*v", $log `
-            -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            Write-Host "::error::msiexec install exit $($p.ExitCode)"
-            Get-Content $log -Tail 80
-            exit $p.ExitCode
-          }
+          $p = Start-Process msiexec.exe -ArgumentList "/i","${{ steps.locate.outputs.msi_path }}","/qn","/l*v",$log -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 80; exit $p.ExitCode }
 
       - name: Assert install layout
         shell: pwsh
         run: |
-          $agent = "C:\Program Files\Vigil\vigil-agent.exe"
-          $tray  = "C:\Program Files\Vigil\vigil-tray.exe"
-          if (-not (Test-Path $agent)) { throw "missing $agent" }
-          if (-not (Test-Path $tray))  { throw "missing $tray" }
-          Write-Host "✓ binaries present"
+          if (-not (Test-Path "C:\Program Files\Vigil\vigil-agent.exe")) { throw "missing vigil-agent.exe" }
+          if (-not (Test-Path "C:\Program Files\Vigil\vigil-tray.exe"))  { throw "missing vigil-tray.exe" }
 
-      - name: Run vigil-agent --version
+      - name: Run vigil-agent --version (and confirm pubkey baked in)
         shell: pwsh
         run: |
-          $out = & "C:\Program Files\Vigil\vigil-agent.exe" --version 2>&1
+          $out = & "C:\Program Files\Vigil\vigil-agent.exe" --version 2>&1 | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
+          if ("${{ secrets.VIGIL_UPDATE_PUBKEY }}" -ne "") {
+            $fp = "${{ secrets.VIGIL_UPDATE_PUBKEY }}".Substring(0,8)
+            if ($out -notmatch [regex]::Escape($fp)) {
+              throw "binary missing expected pubkey fingerprint $fp"
+            }
+            Write-Host "✓ pubkey fingerprint $fp present"
+          }
 
       - name: Uninstall MSI silently
         shell: pwsh
         run: |
           $log = "uninstall.log"
-          $p = Start-Process msiexec.exe `
-            -ArgumentList "/x", "${{ steps.locate.outputs.msi_path }}", "/qn", "/l*v", $log `
-            -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            Write-Host "::error::msiexec uninstall exit $($p.ExitCode)"
-            Get-Content $log -Tail 80
-            exit $p.ExitCode
-          }
+          $p = Start-Process msiexec.exe -ArgumentList "/x","${{ steps.locate.outputs.msi_path }}","/qn","/l*v",$log -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 80; exit $p.ExitCode }
 
       - name: Assert cleanup
         shell: pwsh
         run: |
-          if (Test-Path "C:\Program Files\Vigil\vigil-agent.exe") {
-            throw "vigil-agent.exe still present after uninstall"
-          }
-          # Service should not exist either (was never registered without
-          # enrollment, but assert defensively in case the install paths change).
+          if (Test-Path "C:\Program Files\Vigil\vigil-agent.exe") { throw "vigil-agent.exe still present" }
           $svc = Get-Service VIGILAgent -ErrorAction SilentlyContinue
           if ($svc) { throw "VIGILAgent service still registered" }
-          Write-Host "✓ Program Files\Vigil removed, no VIGILAgent service"
 
       - name: Upload install/uninstall logs (on failure)
         if: failure()
@@ -215,3 +261,87 @@ jobs:
             install.log
             uninstall.log
           if-no-files-found: ignore
+
+  # ─── Sign bare binaries + publish to Hub auto-update channel ────────────
+  # Runs only on tag pushes when all four publish secrets are configured.
+  # Missing any of them → step exits cleanly with a notice, no failure.
+  publish-to-hub:
+    needs: [build-linux, build-msi]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VIGIL_HUB_URL:           ${{ secrets.VIGIL_HUB_URL }}
+      VIGIL_HUB_API_TOKEN:     ${{ secrets.VIGIL_HUB_API_TOKEN }}
+      VIGIL_UPDATE_SIGNING_KEY: ${{ secrets.VIGIL_UPDATE_SIGNING_KEY }}
+      VIGIL_UPDATE_PUBKEY:     ${{ secrets.VIGIL_UPDATE_PUBKEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check publish secrets are configured
+        id: gate
+        run: |
+          if [ -z "$VIGIL_HUB_URL" ] || [ -z "$VIGIL_HUB_API_TOKEN" ] || [ -z "$VIGIL_UPDATE_SIGNING_KEY" ] || [ -z "$VIGIL_UPDATE_PUBKEY" ]; then
+            echo "::notice::Hub publish secrets missing — skipping. Set VIGIL_HUB_URL, VIGIL_HUB_API_TOKEN, VIGIL_UPDATE_SIGNING_KEY, VIGIL_UPDATE_PUBKEY in repo secrets to enable."
+            echo "skip=1" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Stage signing key
+        if: steps.gate.outputs.skip != '1'
+        run: |
+          mkdir -p ~/.config/vigil
+          umask 077
+          printf '%s\n' "$VIGIL_UPDATE_SIGNING_KEY" > ~/.config/vigil/update-signing-key.pem
+          printf '%s\n' "$VIGIL_UPDATE_PUBKEY"      > ~/.config/vigil/update-pubkey.hex
+          chmod 600 ~/.config/vigil/update-signing-key.pem ~/.config/vigil/update-pubkey.hex
+
+      - uses: actions/download-artifact@v4
+        if: steps.gate.outputs.skip != '1'
+        with:
+          name: vigil-agent-linux-amd64
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        if: steps.gate.outputs.skip != '1'
+        with:
+          name: vigil-agent-windows-amd64
+          path: dist/
+
+      - name: Sign + upload + activate each release
+        if: steps.gate.outputs.skip != '1'
+        run: |
+          set -euo pipefail
+          VER=$(grep '^version' vigil-agent/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+
+          for entry in "linux:vigil-agent-linux-amd64-${VER}" "windows:vigil-agent-windows-amd64-${VER}.exe"; do
+            OS="${entry%%:*}"
+            FILE="dist/${entry#*:}"
+            test -f "$FILE" || { echo "::error::missing $FILE"; exit 1; }
+
+            echo "::group::sign $OS"
+            META=$(bash scripts/sign-release.sh "$FILE")
+            echo "$META"
+            SIG=$(echo "$META" | jq -r .signature)
+            SIGNED_BY=$(echo "$META" | jq -r .signedBy)
+            SHA=$(echo "$META" | jq -r .sha256)
+            echo "::endgroup::"
+
+            echo "::group::upload $OS"
+            RESP=$(curl -sS -X POST "${VIGIL_HUB_URL%/}/api/admin/agent-releases/upload" \
+              -H "Authorization: Bearer $VIGIL_HUB_API_TOKEN" \
+              -F "os=$OS" -F "arch=amd64" -F "version=$VER" -F "artifactType=exe-update" \
+              -F "signature=$SIG" -F "signedBy=$SIGNED_BY" -F "expectedSha256=$SHA" \
+              -F "file=@$FILE")
+            echo "$RESP" | jq -c '{id, os, arch, version, signedBy, error}' || echo "$RESP"
+            ID=$(echo "$RESP" | jq -r '.id // empty')
+            if [ -z "$ID" ]; then
+              echo "::error::upload returned no id (response above)"; exit 1
+            fi
+            echo "::endgroup::"
+
+            echo "::group::activate $OS"
+            curl -sS -X PATCH "${VIGIL_HUB_URL%/}/api/admin/agent-releases/$ID" \
+              -H "Authorization: Bearer $VIGIL_HUB_API_TOKEN" -H "Content-Type: application/json" \
+              -d '{"isActive":true}' -w "  HTTP=%{http_code}\n" -o /dev/null
+            echo "::endgroup::"
+          done
