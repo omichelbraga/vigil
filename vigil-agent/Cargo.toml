@@ -53,8 +53,7 @@ upgrade-guid = "3f12f714-be1c-4f0d-ad29-3c5729e681cf"
 path-guid    = "7bfecd6e-03ac-41f2-98e9-8f0612310788"
 license      = false
 eula         = false
-# The EnrollAgent custom action uses WixQuietExec64 from WixUtilExtension.
-# Forward `-ext WixUtilExtension` to both candle (compile) and light (link)
-# so cargo-wix loads the extension's binary table at build time.
-compiler-args = ["-ext", "WixUtilExtension"]
-linker-args   = ["-ext", "WixUtilExtension"]
+# Note: cargo-wix automatically passes `-ext WixUtilExtension` and
+# `-ext WixUIExtension` to both candle and light by default, so the
+# EnrollAgent custom action's use of WixQuietExec64 works without any
+# manual `compiler-args` / `linker-args` declaration here.

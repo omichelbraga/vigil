@@ -185,9 +185,9 @@
       Property="EnrollAgent"
       Value="&quot;[INSTALLDIR]vigil-agent.exe&quot; --enroll &quot;[VIGIL_ENROLL_TOKEN]&quot; --hub-url &quot;[VIGIL_HUB_URL]&quot;" />
     <!-- Uses WixQuietExec64 (vs. WixQuietExec) because the MSI is 64-bit
-         and ships only on x64 Windows. Requires `-ext WixUtilExtension`
-         to be passed to candle/light at build time (the GH Actions
-         workflow does this via `cargo wix -e WixUtilExtension`). -->
+         and ships only on x64 Windows. WixUtilExtension is loaded by
+         cargo-wix's default candle/light invocation, so no extra flags
+         are needed. -->
     <CustomAction
       Id="EnrollAgent"
       BinaryKey="WixCA"
