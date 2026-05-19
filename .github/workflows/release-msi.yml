@@ -286,6 +286,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # myoung34/github-runner ships an ancient Node (~10.x) where
+      # crypto.createPrivateKey doesn't exist (added 11.6). scripts/sign-release.sh
+      # needs that API, so install a modern Node up front and prepend it to PATH.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Check publish secrets are configured
         id: gate
         run: |
