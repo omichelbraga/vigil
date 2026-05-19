@@ -7,6 +7,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      default:
+        ipv4_address: 192.168.255.2
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vigil}"]
       interval: 10s
@@ -69,6 +72,9 @@ services:
         condition: service_healthy
       vigil-migrate:
         condition: service_completed_successfully
+    networks:
+      default:
+        ipv4_address: 192.168.255.3
     healthcheck:
       # 127.0.0.1, not localhost — Node listens on 0.0.0.0 (IPv4) but Alpine
       # resolves localhost to ::1 first; wget fails ECONNREFUSED on the v6
@@ -84,3 +90,16 @@ volumes:
   pgdata:
   uploads:
   binaries:
+
+networks:
+  # Override compose's default bridge so we can pin static IPs per service.
+  # postgres → 192.168.255.2, vigil-hub → 192.168.255.3.
+  # 192.168.255.0/24 was unused on this Docker host at deploy time; pick a
+  # different /24 if it collides on another host.
+  default:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.255.0/24
+          gateway: 192.168.255.1
