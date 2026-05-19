@@ -13,6 +13,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # One-shot migration sidecar. Uses the Dockerfile's `builder` stage so it
+  # has the full prisma CLI dependency graph (including hoisted transitives
+  # the runner stage doesn't carry). Applies the schema via `prisma db push`,
+  # exits 0 on success. vigil-hub depends on this completing successfully.
+  vigil-migrate:
+    build:
+      context: .
+      dockerfile: vigil-hub/Dockerfile
+      target: builder
+    command: ["sh", "-c", "cd vigil-hub && ./node_modules/.bin/prisma db push --skip-generate"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vigil}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigil}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   vigil-hub:
     build:
       # Workspace root context — vigil-hub is an npm workspace member,
@@ -50,6 +67,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      vigil-migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 30s
