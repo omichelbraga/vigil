@@ -1,0 +1,208 @@
+# Build the Windows MSI installer for vigil-agent + vigil-tray.
+#
+# Triggers:
+#   - On push of a v* tag → builds, uploads artifact, attaches to GitHub Release.
+#   - Manual via workflow_dispatch → builds and uploads artifact only.
+#
+# Output: vigil-agent-<version>-x86_64.msi (cargo-wix default naming).
+#
+# Note on code-signing: the resulting MSI is NOT Authenticode-signed (no cert
+# available yet). Windows SmartScreen will warn on first install. See
+# docs/INSTALLER.md for the gap and remediation path.
+name: release-msi
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version_override:
+        description: "Override version in MSI name (default: read from Cargo.toml)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write  # needed to attach the MSI to a GitHub Release
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable (msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      # Cache cargo registry + the cargo-wix install across runs.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/cargo-wix.exe
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-wix
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache target/
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-target-${{ hashFiles('**/Cargo.lock') }}-msi
+          restore-keys: |
+            ${{ runner.os }}-target-
+
+      # WiX 3.14 is required by cargo-wix 0.3.x. The chocolatey package
+      # ships candle.exe + light.exe + the WixUtilExtension we need for
+      # WixQuietExec64. Path: C:\Program Files (x86)\WiX Toolset v3.14\bin
+      - name: Install WiX Toolset 3.14
+        run: |
+          choco install wixtoolset --version=3.14.1 -y --no-progress
+          echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> $env:GITHUB_PATH
+
+      - name: Install cargo-wix
+        run: |
+          if (-not (Test-Path "$env:USERPROFILE\.cargo\bin\cargo-wix.exe")) {
+            cargo install cargo-wix --locked --version "^0.3"
+          } else {
+            Write-Host "cargo-wix already cached"
+          }
+
+      # Build both binaries that the MSI bundles. vigil-tray needs the
+      # `windows-all` feature so the tray + HUD code is compiled in.
+      - name: Build vigil-agent (release)
+        run: cargo build --release --target x86_64-pc-windows-msvc -p vigil-agent
+
+      - name: Build vigil-tray (release, windows-all)
+        run: cargo build --release --target x86_64-pc-windows-msvc -p vigil-tray --features windows-all
+
+      # cargo wix runs candle + light against vigil-agent/wix/main.wxs.
+      # --nocapture surfaces WiX errors directly; -e WixUtilExtension
+      # registers the extension that defines WixQuietExec64.
+      - name: Build MSI
+        working-directory: vigil-agent
+        run: |
+          cargo wix `
+            --no-build `
+            --nocapture `
+            --target x86_64-pc-windows-msvc `
+            -e WixUtilExtension `
+            -o ../target/wix
+
+      - name: List MSI output
+        run: |
+          Get-ChildItem -Recurse target/wix -Filter *.msi |
+            Select-Object FullName, Length |
+            Format-Table
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigil-agent-msi
+          path: target/wix/*.msi
+          if-no-files-found: error
+          retention-days: 30
+
+      # Attach to GitHub Release when triggered by a tag push.
+      - name: Attach MSI to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/wix/*.msi
+          fail_on_unmatched_files: true
+
+  # Smoke test: silently install the MSI (without enrollment), assert the
+  # expected file layout, exercise the binary, then uninstall and assert
+  # cleanup. The service-registration custom actions are NOT exercised here
+  # because they require a live Hub to enroll against — covered by
+  # tests/path_resolution.rs and manual integration runs.
+  smoke-install:
+    needs: build-msi
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download MSI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vigil-agent-msi
+          path: msi
+
+      - name: Locate MSI
+        id: locate
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem msi -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "no MSI in artifact" }
+          Write-Host "Found: $($msi.FullName)"
+          "msi_path=$($msi.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Install MSI silently (no enrollment)
+        shell: pwsh
+        run: |
+          $log = "install.log"
+          $p = Start-Process msiexec.exe `
+            -ArgumentList "/i", "${{ steps.locate.outputs.msi_path }}", "/qn", "/l*v", $log `
+            -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::error::msiexec install exit $($p.ExitCode)"
+            Get-Content $log -Tail 80
+            exit $p.ExitCode
+          }
+
+      - name: Assert install layout
+        shell: pwsh
+        run: |
+          $agent = "C:\Program Files\Vigil\vigil-agent.exe"
+          $tray  = "C:\Program Files\Vigil\vigil-tray.exe"
+          if (-not (Test-Path $agent)) { throw "missing $agent" }
+          if (-not (Test-Path $tray))  { throw "missing $tray" }
+          Write-Host "✓ binaries present"
+
+      - name: Run vigil-agent --version
+        shell: pwsh
+        run: |
+          $out = & "C:\Program Files\Vigil\vigil-agent.exe" --version 2>&1
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { throw "version exited $LASTEXITCODE" }
+
+      - name: Uninstall MSI silently
+        shell: pwsh
+        run: |
+          $log = "uninstall.log"
+          $p = Start-Process msiexec.exe `
+            -ArgumentList "/x", "${{ steps.locate.outputs.msi_path }}", "/qn", "/l*v", $log `
+            -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::error::msiexec uninstall exit $($p.ExitCode)"
+            Get-Content $log -Tail 80
+            exit $p.ExitCode
+          }
+
+      - name: Assert cleanup
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Program Files\Vigil\vigil-agent.exe") {
+            throw "vigil-agent.exe still present after uninstall"
+          }
+          # Service should not exist either (was never registered without
+          # enrollment, but assert defensively in case the install paths change).
+          $svc = Get-Service VIGILAgent -ErrorAction SilentlyContinue
+          if ($svc) { throw "VIGILAgent service still registered" }
+          Write-Host "✓ Program Files\Vigil removed, no VIGILAgent service"
+
+      - name: Upload install/uninstall logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msi-logs
+          path: |
+            install.log
+            uninstall.log
+          if-no-files-found: ignore

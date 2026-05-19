@@ -1,6 +1,6 @@
 [package]
 name = "vigil-agent"
-version = "0.3.0-dev"
+version = "0.3.0"
 edition = "2021"
 description = "Vigil server monitoring agent"
 
@@ -39,3 +39,17 @@ windows-service = "0.7"
 
 [dev-dependencies]
 tempfile = "3"
+
+# Windows Installer (MSI) metadata, consumed by `cargo wix`. The GUIDs below
+# are pinned for the lifetime of this product — never regenerate them, or
+# existing installs will fail to upgrade in-place and end up as duplicate
+# entries in Add/Remove Programs.
+#
+# Layout produced by the MSI (see wix/main.wxs):
+#   C:\Program Files\Vigil\        — vigil-agent.exe, vigil-tray.exe (read-only)
+#   C:\ProgramData\Vigil\          — config.toml, vigil-buffer.db, agent.log
+[package.metadata.wix]
+upgrade-guid = "3f12f714-be1c-4f0d-ad29-3c5729e681cf"
+path-guid    = "7bfecd6e-03ac-41f2-98e9-8f0612310788"
+license      = false
+eula         = false

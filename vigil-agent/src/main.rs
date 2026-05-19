@@ -16,7 +16,8 @@ use tracing_subscriber::EnvFilter;
 
 use vigil_agent::{
     buffer, config, doctor, enroll, hub_client, installer, inventory, ipc, ipc_client, monitors,
-    resource_sampler, result_signing, updater, PROTOCOL_VERSION, UPDATE_PUBKEY_FINGERPRINT,
+    resource_sampler, resolve_data_path, result_signing, updater, PROTOCOL_VERSION,
+    UPDATE_PUBKEY_FINGERPRINT,
 };
 
 // Re-exported at the binary crate root so the Windows service module
@@ -49,6 +50,18 @@ struct Cli {
 
     #[arg(long, env = "VIGIL_ENROLL_TOKEN", global = true)]
     enroll: Option<String>,
+
+    /// Register the OS service against an existing config (no enrollment).
+    /// Invoked by the MSI installer when config.toml already exists on the
+    /// host — the binary itself owns the service-registration logic so MSI
+    /// and ad-hoc installs share one code path.
+    #[arg(long, default_value_t = false, global = true)]
+    install_service: bool,
+
+    /// Stop and delete the OS service. Inverse of `--install-service`. Run
+    /// by the MSI uninstaller before file removal so the .exe isn't in use.
+    #[arg(long, default_value_t = false, global = true)]
+    remove_service: bool,
 
     /// Skip TLS certificate verification during enrollment. Needed for dev
     /// Hubs with self-signed certs; NEVER use this on untrusted networks.
@@ -205,10 +218,15 @@ fn resolve_log_file_path(explicit: Option<&str>, buffer_path: &str) -> Option<Pa
 
 /// Main monitoring loop — called from both CLI and Windows service
 pub async fn run_agent(config_path: &str) -> Result<()> {
-    let cfg = config::Config::load(config_path).unwrap_or_else(|e| {
+    let mut cfg = config::Config::load(config_path).unwrap_or_else(|e| {
         warn!("Could not load config '{}': {e}. Using defaults.", config_path);
         config::Config::default()
     });
+
+    // Re-anchor a relative buffer path so a service launched from
+    // C:\Windows\System32 (or any non-data CWD) writes the SQLite buffer to
+    // the Vigil data dir, not the service's working directory.
+    cfg.buffer_path = resolve_data_path(&cfg.buffer_path);
 
     info!(
         agent_name = %cfg.agent_name,
@@ -330,6 +348,8 @@ fn main() {
         let args: Vec<String> = std::env::args().collect();
         let is_cli_invocation = args.iter().any(|a| {
             a == "--enroll"
+                || a == "--install-service"
+                || a == "--remove-service"
                 || a == "--help"
                 || a == "-h"
                 || a == "--version"
@@ -397,6 +417,39 @@ async fn async_main() -> Result<i32> {
         }
     }
 
+    // Service-management flags (invoked by the MSI installer / uninstaller).
+    // Both short-circuit further processing.
+    if cli.remove_service {
+        let exit = match installer::remove_service() {
+            Ok(()) => {
+                println!("✅ Vigil agent service removed");
+                0
+            }
+            Err(e) => {
+                eprintln!("⚠️  Service removal failed: {e}");
+                // Return 0 anyway — MSI uninstall must not abort because the
+                // service was already gone. The error is logged for the operator.
+                0
+            }
+        };
+        return Ok(exit);
+    }
+
+    if cli.install_service {
+        let config_path = resolve_config_path(&cli.config);
+        let exe_path = std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from("vigil-agent"))
+            .to_string_lossy()
+            .to_string();
+        match installer::install_service(&exe_path, &config_path) {
+            Ok(()) => return Ok(0),
+            Err(e) => {
+                eprintln!("⚠️  Service install failed: {e}");
+                return Ok(1);
+            }
+        }
+    }
+
     // Enrollment flow
     if let Some(ref enrollment_token) = cli.enroll {
         let hub_url = cli.hub_url.as_deref().unwrap_or("http://localhost:3000");
@@ -445,6 +498,10 @@ async fn async_main() -> Result<i32> {
     if let Some(token) = cli.hub_token { cfg.hub_token = token; }
     if let Some(name) = cli.agent_name { cfg.agent_name = name; }
     if cli.auto_update { cfg.auto_update = true; }
+
+    // Re-anchor relative buffer paths against the Vigil data dir (see
+    // `run_agent` for context).
+    cfg.buffer_path = resolve_data_path(&cfg.buffer_path);
 
     info!(agent_name = %cfg.agent_name, hub_url = %cfg.hub_url,
         "Starting Vigil agent v{}", env!("CARGO_PKG_VERSION"));

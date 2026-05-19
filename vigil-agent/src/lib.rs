@@ -21,25 +21,57 @@ pub mod updater;
 
 use once_cell::sync::Lazy;
 
-/// Resolve config path relative to the exe directory (works when running as a service)
+/// Return the Vigil mutable-data directory for this host.
 ///
-/// Lives in the library so `windows_service.rs` (which is compiled as part of
-/// the library) can call it without round-tripping through the binary.
-pub fn resolve_config_path(given: &str) -> String {
+/// On Windows this is `%ProgramData%\Vigil` — the standard location for
+/// machine-wide mutable state owned by a system service. The MSI installer
+/// creates this directory; for non-MSI installs the directory is created
+/// lazily by [`installer::write_config`].
+///
+/// On non-Windows targets this returns `None` so callers fall back to
+/// exe-relative resolution (the historical behavior — Linux systemd units
+/// set `WorkingDirectory` to the config dir, which is enough).
+#[cfg(windows)]
+pub fn vigil_data_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("ProgramData")
+        .unwrap_or_else(|| std::ffi::OsString::from(r"C:\ProgramData"));
+    Some(std::path::PathBuf::from(base).join("Vigil"))
+}
+
+#[cfg(not(windows))]
+pub fn vigil_data_dir() -> Option<std::path::PathBuf> {
+    None
+}
+
+/// Resolve a (possibly relative) data-file path against the Vigil data
+/// directory. Absolute paths pass through unchanged. Relative paths are
+/// joined against [`vigil_data_dir`] on Windows, or the exe directory on
+/// other OSes. Used for both config.toml and the SQLite buffer so a service
+/// started from `C:\Windows\System32` (the default CWD) doesn't write files
+/// into a system path.
+pub fn resolve_data_path(given: &str) -> String {
     let p = std::path::Path::new(given);
     if p.is_absolute() {
         return given.to_string();
     }
+    if let Some(dir) = vigil_data_dir() {
+        return dir.join(given).to_string_lossy().to_string();
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join(given);
-            if candidate.exists() {
-                return candidate.to_string_lossy().to_string();
-            }
-            return candidate.to_string_lossy().to_string();
+            return dir.join(given).to_string_lossy().to_string();
         }
     }
     given.to_string()
+}
+
+/// Resolve a config-file path. Same semantics as [`resolve_data_path`] —
+/// kept as a named alias so call sites read more clearly.
+///
+/// Lives in the library so `windows_service.rs` (which is compiled as part of
+/// the library) can call it without round-tripping through the binary.
+pub fn resolve_config_path(given: &str) -> String {
+    resolve_data_path(given)
 }
 
 /// Current agent <-> Hub wire protocol. Bumped whenever the register/heartbeat

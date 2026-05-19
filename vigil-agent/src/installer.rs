@@ -39,9 +39,10 @@ disk_alert_pct = 90.0
 
 /// Write a file with owner-only permissions on Unix (0o600). On Windows we
 /// rely on inherited ACLs; services run as LocalSystem which restricts access
-/// to Administrators by default for files under %ProgramFiles%.
+/// to Administrators by default for files under %ProgramData%.
 #[cfg(unix)]
 fn write_private(path: &str, bytes: &[u8]) -> Result<()> {
+    ensure_parent(path)?;
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = std::fs::OpenOptions::new()
@@ -60,7 +61,19 @@ fn write_private(path: &str, bytes: &[u8]) -> Result<()> {
 
 #[cfg(not(unix))]
 fn write_private(path: &str, bytes: &[u8]) -> Result<()> {
+    ensure_parent(path)?;
     std::fs::write(path, bytes)?;
+    Ok(())
+}
+
+/// Make sure the parent directory of `path` exists. No-op when the path has
+/// no parent component (e.g., a bare filename in the current directory).
+fn ensure_parent(path: &str) -> Result<()> {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
     Ok(())
 }
 
@@ -190,5 +203,52 @@ pub fn install_service(exe_path: &str, config_path: &str) -> Result<()> {
 pub fn install_service(_exe_path: &str, config_path: &str) -> Result<()> {
     println!("ℹ️  Auto-service install not supported on this OS");
     println!("   Run manually: vigil-agent --config \"{}\"", config_path);
+    Ok(())
+}
+
+/// Stop and delete the OS service. Idempotent: returns `Ok(())` when the
+/// service does not exist (the MSI uninstaller calls this unconditionally).
+#[cfg(windows)]
+pub fn remove_service() -> Result<()> {
+    use std::process::Command;
+
+    // Stop the service first so the .exe isn't in use when files are removed.
+    // sc.exe stop returns 1062 when the service is already stopped — we
+    // treat any non-success as a soft error and continue to delete.
+    let _ = Command::new("sc.exe").args(["stop", "VIGILAgent"]).output();
+
+    // sc.exe delete returns 1060 if the service is not installed; we silence
+    // that case but surface other failures.
+    let out = Command::new("sc.exe").args(["delete", "VIGILAgent"]).output()?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let combined = format!("{stdout}{stderr}").to_lowercase();
+        // 1060: ERROR_SERVICE_DOES_NOT_EXIST — fine, already gone.
+        if !combined.contains("1060") && !combined.contains("does not exist") {
+            anyhow::bail!("sc.exe delete failed: {stdout}{stderr}");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn remove_service() -> Result<()> {
+    use std::process::Command;
+
+    let unit = "/etc/systemd/system/vigil-agent.service";
+    let _ = Command::new("systemctl")
+        .args(["disable", "--now", "vigil-agent"])
+        .output();
+    if std::path::Path::new(unit).exists() {
+        let _ = std::fs::remove_file(unit);
+        let _ = Command::new("systemctl").args(["daemon-reload"]).output();
+    }
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub fn remove_service() -> Result<()> {
+    println!("ℹ️  Service removal not supported on this OS");
     Ok(())
 }

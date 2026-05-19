@@ -326,8 +326,17 @@ model AgentRelease {
   isActive  Boolean  @default(false) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Which distribution channel this artifact feeds:
+  //   exe-update     → bare .exe / ELF served via /api/update/agent/... and
+  //                     consumed by the agent's self-update path; ed25519 signed.
+  //   msi-installer  → Windows .msi served via /api/install/agent/windows/amd64
+  //                     for first install, gated by an enrollment token.
+  artifactType String @default("exe-update") @map("artifact_type")
+
   // Release-signing metadata (P6.3). `signature` is ed25519 over sha256 hex,
-  // `signedBy` is the 8-char fingerprint of the signing pubkey.
+  // `signedBy` is the 8-char fingerprint of the signing pubkey. Only meaningful
+  // for `exe-update` releases (MSI authenticity comes from Authenticode, not
+  // from the in-band ed25519 chain).
   signature  String?
   signedBy   String? @map("signed_by")
   uploadedBy String? @map("uploaded_by") // user id of uploader
