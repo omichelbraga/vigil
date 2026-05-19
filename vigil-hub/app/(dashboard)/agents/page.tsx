@@ -37,6 +37,12 @@ interface Agent {
 }
 
 export default function AgentsPage() {
+  // Browser-side URL = the exact origin the user loaded the dashboard from,
+  // so the displayed enroll command works on whatever host/port the Hub is
+  // currently served at. NEXT_PUBLIC_APP_URL is inlined at build time and
+  // would bake in a stale value if the Hub gets reverse-proxied later.
+  const hubUrl =
+    typeof window !== "undefined" ? window.location.origin : "";
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -421,10 +427,10 @@ export default function AgentsPage() {
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Run on the agent machine:</p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-sm font-mono text-gray-900 dark:text-white break-all">
-                      vigil-agent --enroll {enrollToken.token} --hub-url http://192.168.9.113:3000
+                      vigil-agent --enroll {enrollToken.token} --hub-url {hubUrl}
                     </code>
                     <button
-                      onClick={() => handleCopy(`vigil-agent --enroll ${enrollToken.token} --hub-url http://192.168.9.113:3000`)}
+                      onClick={() => handleCopy(`vigil-agent --enroll ${enrollToken.token} --hub-url ${hubUrl}`)}
                       className="rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
                     >
                       {copied ? (
