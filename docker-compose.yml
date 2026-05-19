@@ -69,6 +69,12 @@ services:
       # IPs, etc.). Disabled by default — set on the stack when the Hub is
       # intentionally deployed in private space. Loosens SSRF defence.
       VIGIL_ALLOW_INTERNAL_NET: ${VIGIL_ALLOW_INTERNAL_NET:-0}
+      # 64-hex ed25519 public key the operator signs releases with. Required
+      # by the rollout flow — without it the Admin → Agent Releases page
+      # shows "No signing key configured" and unsigned uploads can't be
+      # promoted. Generate via the snippet in README "Quick start" step 3;
+      # set on the stack (Portainer: Stack → Env), not in the repo.
+      VIGIL_UPDATE_PUBKEY: ${VIGIL_UPDATE_PUBKEY:-}
     volumes:
       - uploads:/app/public/uploads
       - binaries:/app/binaries
