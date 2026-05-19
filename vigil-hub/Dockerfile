@@ -11,10 +11,14 @@ WORKDIR /app
 # workspace and aren't needed for the Hub image.
 COPY package.json package-lock.json ./
 COPY vigil-hub/package.json ./vigil-hub/package.json
-# Strict reproducible install of production deps for the Hub workspace.
-# --include-workspace-root brings in any deps declared on the root package
-# (currently none at runtime, but future-proof).
-RUN npm ci --omit=dev --workspace vigil-hub --include-workspace-root
+# Strict reproducible install of ALL deps for the Hub workspace, including
+# devDependencies. Build-time tooling (tailwindcss, @tailwindcss/postcss,
+# typescript, eslint-config-next, …) lives under devDependencies and is
+# required to compile the app — `next build` invokes the PostCSS pipeline
+# which needs @tailwindcss/postcss installed. Pruning happens implicitly:
+# the runner stage copies only Next.js's standalone bundle, which is
+# self-trimmed (Vercel's tracer keeps only the runtime closure).
+RUN npm ci --workspace vigil-hub --include-workspace-root
 
 # ===== builder stage =====
 FROM node:20-alpine AS builder
