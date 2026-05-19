@@ -64,6 +64,11 @@ services:
       TWILIO_TOKEN: ${TWILIO_TOKEN:-}
       TWILIO_FROM: ${TWILIO_FROM:-}
       AGENT_BINARIES_PATH: /app/binaries
+      # Allow the Hub to call RFC1918 / loopback hosts (SMTP relays inside the
+      # corp net, cert monitors against internal CAs, webhooks to private LB
+      # IPs, etc.). Disabled by default — set on the stack when the Hub is
+      # intentionally deployed in private space. Loosens SSRF defence.
+      VIGIL_ALLOW_INTERNAL_NET: ${VIGIL_ALLOW_INTERNAL_NET:-0}
     volumes:
       - uploads:/app/public/uploads
       - binaries:/app/binaries
