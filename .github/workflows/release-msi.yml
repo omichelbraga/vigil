@@ -101,6 +101,7 @@ jobs:
           cargo wix `
             --no-build `
             --nocapture `
+            --package vigil-agent `
             --target x86_64-pc-windows-msvc `
             -o ../target/wix
 
