@@ -85,12 +85,16 @@ export function middleware(request: NextRequest) {
     }
   }
 
-  // Root redirect to dashboard if authenticated, login if not
+  // Root redirect. With a session: jump to /dashboard. Without one: let the
+  // home page render so its server component can choose between /setup
+  // (first-run, userCount===0) and /login (post-setup). Redirecting to
+  // /login unconditionally here would short-circuit the first-run setup
+  // wizard, leaving fresh deployments stuck on the login screen.
   if (pathname === "/") {
     if (sessionCookie?.value) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
-    return NextResponse.redirect(new URL("/login", request.url));
+    return response;
   }
 
   return response;
