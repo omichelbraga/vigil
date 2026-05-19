@@ -59,13 +59,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-target-
 
-      # WiX 3.14 is required by cargo-wix 0.3.x. The chocolatey package
-      # ships candle.exe + light.exe + the WixUtilExtension we need for
-      # WixQuietExec64. Path: C:\Program Files (x86)\WiX Toolset v3.14\bin
-      - name: Install WiX Toolset 3.14
+      # WiX 3.14 is required by cargo-wix 0.3.x. GitHub's windows-latest image
+      # ships it pre-installed at C:\Program Files (x86)\WiX Toolset v3.14\,
+      # so we only fall back to `choco install` if it's missing — pinning
+      # --version against an already-present image build (e.g. 3.14.1.20250415)
+      # otherwise errors as a downgrade.
+      - name: Ensure WiX Toolset 3.14
         run: |
-          choco install wixtoolset --version=3.14.1 -y --no-progress
-          echo "C:\Program Files (x86)\WiX Toolset v3.14\bin" >> $env:GITHUB_PATH
+          $wixBin = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
+          if (Test-Path "$wixBin\candle.exe") {
+            Write-Host "✓ WiX 3.14 already installed at $wixBin"
+          } else {
+            Write-Host "WiX not present — installing via chocolatey"
+            choco install wixtoolset --version=3.14.1 -y --no-progress
+          }
+          echo "$wixBin" >> $env:GITHUB_PATH
 
       - name: Install cargo-wix
         run: |
