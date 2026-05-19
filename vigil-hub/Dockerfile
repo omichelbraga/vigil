@@ -57,8 +57,11 @@ EXPOSE 3000
 # that interface — both the HEALTHCHECK (wget http://localhost:3000) and
 # Docker's NAT port-forward (0.0.0.0 → container) fail with ECONNREFUSED.
 ENV HOSTNAME=0.0.0.0
+# Use 127.0.0.1 explicitly: `localhost` in Alpine resolves to ::1 first and
+# Node's listen(0.0.0.0) is IPv4-only, so wget gets ECONNREFUSED on the v6
+# attempt before falling back. Pinning to v4 makes the healthcheck reliable.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+  CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
 # Migrations run in a separate one-shot sidecar service (see docker-compose
 # `vigil-migrate`), which uses this Dockerfile's `builder` stage and has the
 # full prisma CLI dependency graph (including hoisted transitives like
