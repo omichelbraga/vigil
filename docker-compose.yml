@@ -15,8 +15,10 @@ services:
 
   vigil-hub:
     build:
-      context: ./vigil-hub
-      dockerfile: Dockerfile
+      # Workspace root context — vigil-hub is an npm workspace member,
+      # so the Dockerfile needs the root package-lock.json to resolve deps.
+      context: .
+      dockerfile: vigil-hub/Dockerfile
     ports:
       - "3000:3000"
     environment:
