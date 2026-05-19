@@ -24,7 +24,11 @@ COPY --from=deps /app/vigil-hub/node_modules ./vigil-hub/node_modules
 COPY package.json package-lock.json ./
 COPY vigil-hub ./vigil-hub
 # Generate Prisma client (needs to happen after the schema is in place).
-RUN cd vigil-hub && npx prisma generate
+# Use vigil-hub's locally-installed prisma binary explicitly: the workspace
+# root has a transitive prisma@7.x hoisted next to it, and `npx prisma`
+# from inside vigil-hub/ resolves to that one first, which can't parse
+# inline `url = env(...)` and silently produces a stale client.
+RUN cd vigil-hub && ./node_modules/.bin/prisma generate
 # Build Next.js standalone for the vigil-hub workspace.
 RUN npm run build --workspace vigil-hub
 
@@ -43,11 +47,13 @@ COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/static ./.next/st
 COPY --from=builder /app/vigil-hub/prisma ./prisma
 
 # Bundle the prisma CLI so the entrypoint can apply the schema on startup.
-# In a workspace install, prisma is hoisted to the workspace root, so it
-# lives at /app/node_modules/prisma (not vigil-hub/node_modules/).
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
+# Pull from vigil-hub/node_modules — NOT the workspace root — because the
+# Hub pins prisma@6.x while a transitive 7.x is hoisted at the root. The
+# matching version of @prisma/client is also under vigil-hub/node_modules
+# (same workspace-pin reason), so we copy both from there for consistency.
+COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/node_modules/prisma ./node_modules/prisma
+COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/node_modules/.bin/prisma ./node_modules/.bin/prisma
 
 USER nextjs
 EXPOSE 3000
