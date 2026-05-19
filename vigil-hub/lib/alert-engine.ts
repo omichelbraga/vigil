@@ -486,7 +486,7 @@ async function sendSmtpAlert(config: Record<string, unknown>, n: Notification) {
 
           <!-- CTA -->
           <div style="margin-top:28px;text-align:center;">
-            <a href="http://192.168.9.113:3000" style="display:inline-block;background:${accentColor};color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px;">View in Vigil →</a>
+            <a href="${process.env.NEXT_PUBLIC_APP_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000"}" style="display:inline-block;background:${accentColor};color:#ffffff;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;text-decoration:none;letter-spacing:0.2px;">View in Vigil →</a>
           </div>
         </td></tr>
 
