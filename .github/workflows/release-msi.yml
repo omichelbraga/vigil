@@ -271,7 +271,12 @@ jobs:
   publish-to-hub:
     needs: [build-linux, build-msi]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    # Self-hosted runner sitting inside the network where vigil-hub lives.
+    # GitHub-hosted runners (Azure) can't resolve internal hostnames like
+    # vigil.san-marcos.net, so the upload+activate step must originate from
+    # a host on the LAN. Deploy a runner with the `vigil-internal` label
+    # via the Portainer stack `vigil-runner` (see docs/INSTALLER.md).
+    runs-on: [self-hosted, linux, vigil-internal]
     timeout-minutes: 10
     env:
       VIGIL_HUB_URL:           ${{ secrets.VIGIL_HUB_URL }}
