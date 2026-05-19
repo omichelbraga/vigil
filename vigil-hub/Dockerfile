@@ -50,20 +50,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/standalone/node_m
 COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/static ./.next/static
 COPY --from=builder /app/vigil-hub/prisma ./prisma
 
-# Bundle the prisma CLI so the entrypoint can apply the schema on startup.
-# Pull from vigil-hub/node_modules — NOT the workspace root — because the
-# Hub pins prisma@6.x while a transitive 7.x is hoisted at the root. The
-# matching version of @prisma/client is also under vigil-hub/node_modules
-# (same workspace-pin reason), so we copy both from there for consistency.
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/node_modules/prisma ./node_modules/prisma
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/node_modules/.bin/prisma ./node_modules/.bin/prisma
-
 USER nextjs
 EXPOSE 3000
-# start-period covers prisma db push on a cold DB.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD wget -qO- http://localhost:3000/api/health || exit 1
-# Apply schema before starting the server. Idempotent on an already-current
-# schema; refuses destructive changes without --accept-data-loss.
-CMD ["sh", "-c", "node_modules/.bin/prisma db push --skip-generate && node server.js"]
+# Migrations run in a separate one-shot sidecar service (see docker-compose
+# `vigil-migrate`), which uses this Dockerfile's `builder` stage and has the
+# full prisma CLI dependency graph (including hoisted transitives like
+# `effect`). Once that exits 0, vigil-hub starts and trusts the schema.
+CMD ["node", "server.js"]
