@@ -20,7 +20,10 @@ services:
       context: .
       dockerfile: vigil-hub/Dockerfile
     ports:
-      - "3000:3000"
+      # Host port is parameterised so the stack can sit behind a reverse-proxy
+      # / coexist with other apps on the same Docker host. Override via the
+      # HUB_HOST_PORT env var on the stack (Portainer: Stack → Env).
+      - "${HUB_HOST_PORT:-3000}:3000"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-vigil}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vigil}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (64 hex chars)}
