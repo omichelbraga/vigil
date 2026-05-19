@@ -92,8 +92,9 @@ jobs:
         run: cargo build --release --target x86_64-pc-windows-msvc -p vigil-tray --features windows-all
 
       # cargo wix runs candle + light against vigil-agent/wix/main.wxs.
-      # --nocapture surfaces WiX errors directly; -e WixUtilExtension
-      # registers the extension that defines WixQuietExec64.
+      # The WixUtilExtension load is declared in
+      # vigil-agent/Cargo.toml [package.metadata.wix] (compiler-args /
+      # linker-args), so the CLI invocation stays minimal here.
       - name: Build MSI
         working-directory: vigil-agent
         run: |
@@ -101,7 +102,6 @@ jobs:
             --no-build `
             --nocapture `
             --target x86_64-pc-windows-msvc `
-            -e WixUtilExtension `
             -o ../target/wix
 
       - name: List MSI output
