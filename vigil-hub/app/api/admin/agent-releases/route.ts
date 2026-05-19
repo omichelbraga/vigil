@@ -11,6 +11,7 @@ export interface AdminAgentReleaseRow {
   os: string;
   arch: string;
   version: string;
+  artifactType: string; // "exe-update" | "msi-installer"
   sha256: string;
   filename: string;
   filePath: string | null;
@@ -87,6 +88,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       os: r.os,
       arch: r.arch,
       version: r.version,
+      artifactType: r.artifactType,
       sha256: r.sha256,
       filename: r.filename,
       filePath: r.filePath,
@@ -100,7 +102,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         ? uploaderById.get(r.uploadedBy) ?? null
         : null,
       uploadedAt: r.createdAt.toISOString(),
-      downloadUrl: `/api/update/agent/${encodeURIComponent(r.os)}/${encodeURIComponent(r.arch)}/download`,
+      downloadUrl: `/api/admin/agent-releases/${encodeURIComponent(r.id)}/download`,
     };
   });
 

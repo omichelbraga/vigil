@@ -42,6 +42,7 @@ interface ReleaseRow {
   os: string;
   arch: string;
   version: string;
+  artifactType: string; // "exe-update" | "msi-installer"
   sha256: string;
   filename: string;
   filePath: string | null;
@@ -55,6 +56,8 @@ interface ReleaseRow {
   uploadedAt: string;
   downloadUrl: string;
 }
+
+type ArtifactType = "exe-update" | "msi-installer";
 
 interface RunningVersionMap {
   [osArch: string]: { [version: string]: number };
@@ -274,6 +277,31 @@ export default function AdminAgentReleasesPage(): React.ReactElement {
         },
       },
       {
+        id: "artifactType",
+        header: "Channel",
+        cell: ({ row }) => {
+          const r = row.original;
+          if (r.artifactType === "msi-installer") {
+            return (
+              <Badge
+                variant="ok"
+                title="Windows MSI installer (served via /api/install/agent/windows/amd64)"
+              >
+                msi
+              </Badge>
+            );
+          }
+          return (
+            <Badge
+              variant="muted"
+              title="In-place auto-update binary (served via /api/update/agent/...)"
+            >
+              exe-update
+            </Badge>
+          );
+        },
+      },
+      {
         id: "sha256",
         header: "SHA-256",
         cell: ({ row }) => {
@@ -393,9 +421,13 @@ export default function AdminAgentReleasesPage(): React.ReactElement {
         id: "download",
         header: "Download",
         cell: ({ row }) => (
-          <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-            {row.original.downloadUrl}
-          </code>
+          <a
+            href={row.original.downloadUrl}
+            download={row.original.filename}
+            className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-1 font-mono text-xs text-blue-700 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300 dark:hover:bg-blue-900"
+          >
+            ↓ {row.original.filename}
+          </a>
         ),
       },
       {
@@ -642,6 +674,7 @@ function UploadDialog({
   const toast = useToast();
   const [os, setOs] = useState<Os>("linux");
   const [arch, setArch] = useState<Arch>("amd64");
+  const [artifactType, setArtifactType] = useState<ArtifactType>("exe-update");
   const [version, setVersion] = useState("");
   const [signature, setSignature] = useState("");
   const [signedBy, setSignedBy] = useState("");
@@ -653,6 +686,7 @@ function UploadDialog({
   const reset = () => {
     setOs("linux");
     setArch("amd64");
+    setArtifactType("exe-update");
     setVersion("");
     setSignature("");
     setSignedBy("");
@@ -660,6 +694,16 @@ function UploadDialog({
     setUploading(false);
     setProgress(0);
     setError(null);
+  };
+
+  // MSI is Windows-only. Auto-flip os when switching artifact type so the
+  // server-side validation (msi-installer requires os=windows) never fails
+  // the user mid-form.
+  const handleArtifactTypeChange = (next: ArtifactType) => {
+    setArtifactType(next);
+    if (next === "msi-installer" && os !== "windows") {
+      setOs("windows");
+    }
   };
 
   const versionValid = version.length === 0 || VERSION_RE.test(version);
@@ -687,6 +731,7 @@ function UploadDialog({
     const form = new FormData();
     form.append("os", os);
     form.append("arch", arch);
+    form.append("artifactType", artifactType);
     form.append("version", version);
     if (signature) form.append("signature", signature);
     if (signedBy) form.append("signedBy", signedBy);
@@ -758,6 +803,31 @@ function UploadDialog({
           </Dialog.Description>
 
           <form className="mt-5 flex flex-col gap-4" onSubmit={handleSubmit}>
+            <label className="flex flex-col gap-1.5 text-sm">
+              <span className="font-medium text-gray-700 dark:text-gray-300">
+                Distribution channel <span className="text-rose-500">*</span>
+              </span>
+              <select
+                value={artifactType}
+                onChange={(e) =>
+                  handleArtifactTypeChange(e.target.value as ArtifactType)
+                }
+                disabled={uploading}
+                className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+              >
+                <option value="exe-update">
+                  exe-update — auto-update channel (signed .exe / ELF)
+                </option>
+                <option value="msi-installer">
+                  msi-installer — Windows first-install (.msi)
+                </option>
+              </select>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {artifactType === "msi-installer"
+                  ? "Served from /api/install/agent/windows/amd64 with an enrollment token. Authenticode signing is separate from the ed25519 chain below."
+                  : "Served from /api/update/agent/.../download to agents that already have a hub bearer token. Sign with scripts/sign-release.sh."}
+              </span>
+            </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="flex flex-col gap-1.5 text-sm">
                 <span className="font-medium text-gray-700 dark:text-gray-300">
@@ -766,8 +836,8 @@ function UploadDialog({
                 <select
                   value={os}
                   onChange={(e) => setOs(e.target.value as Os)}
-                  disabled={uploading}
-                  className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
+                  disabled={uploading || artifactType === "msi-installer"}
+                  className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100"
                 >
                   <option value="linux">linux</option>
                   <option value="windows">windows</option>
@@ -869,7 +939,11 @@ function UploadDialog({
               <input
                 type="file"
                 required
-                accept=".exe,application/octet-stream"
+                accept={
+                  artifactType === "msi-installer"
+                    ? ".msi,application/x-msi"
+                    : ".exe,application/octet-stream"
+                }
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 disabled={uploading}
                 className="block w-full cursor-pointer rounded-lg border border-gray-300 bg-white text-sm text-gray-900 file:mr-3 file:cursor-pointer file:rounded-l-lg file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-100 dark:file:bg-gray-800 dark:file:text-gray-200"

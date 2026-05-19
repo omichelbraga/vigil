@@ -109,19 +109,36 @@ WantedBy=multi-user.target
 
 ## Windows Installation
 
+The supported install path is the MSI served by the Hub. It bundles
+`vigil-agent.exe` and `vigil-tray.exe`, installs them under
+`C:\Program Files\Vigil\`, creates `C:\ProgramData\Vigil\` for config +
+buffer + logs, registers the `VIGILAgent` service with crash recovery, and
+optionally enrolls the host during install. See
+[INSTALLER.md](INSTALLER.md) for the full reference (GPO/Intune,
+upgrade semantics, SmartScreen note).
+
 ### Silent install (PowerShell as Administrator)
 ```powershell
-# Create install directory
-New-Item -ItemType Directory -Force -Path "C:\Program Files\Vigil"
-Copy-Item vigil-agent.exe "C:\Program Files\Vigil\"
+$token = "XWZK-NBT6"               # one-shot enrollment token from the Hub
+$hub   = "http://HUB_IP:3000"
 
-# Enroll (creates config.toml + installs SCM service)
-& "C:\Program Files\Vigil\vigil-agent.exe" `
-  --enroll YOUR_TOKEN `
-  --hub-url http://HUB_IP:3000
+Invoke-WebRequest "$hub/api/install/agent/windows/amd64?token=$token" `
+  -OutFile vigil-agent.msi
 
-# Approve agent in Hub
+msiexec /i vigil-agent.msi /qn `
+  VIGIL_ENROLL_TOKEN=$token `
+  VIGIL_HUB_URL=$hub
 ```
+
+The MSI's custom action runs `vigil-agent --enroll`, which writes
+`C:\ProgramData\Vigil\config.toml`, registers the `VIGILAgent` service
+(restart policy: 5s / 10s / 30s), and starts it. Approve the host from the
+Hub dashboard to begin reporting.
+
+### Reinstall / repair without a token
+If `C:\ProgramData\Vigil\config.toml` already exists, the MSI skips
+enrollment and re-registers the service against the existing config — safe
+to re-run on an already-configured host without clobbering its identity.
 
 ### Service management (PowerShell)
 ```powershell
@@ -134,10 +151,18 @@ Get-Service VIGILAgent
 Get-EventLog -LogName Application -Source VIGILAgent -Newest 20
 ```
 
-### Auto-restart on failure
+### Uninstall
 ```powershell
-sc.exe failure VIGILAgent reset= 86400 actions= restart/5000/restart/10000/restart/30000
+# Either: msiexec, with the product code from `wmic product where "Name='Vigil Monitoring Agent'" get IdentifyingNumber`
+msiexec /x "{<product-code>}" /qn
+
+# Or: Settings → Apps → Vigil Monitoring Agent → Uninstall
 ```
+
+The uninstaller stops + deletes the `VIGILAgent` service and removes
+`C:\Program Files\Vigil\`. **`C:\ProgramData\Vigil\` is preserved**, so a
+fresh install (with or without a new enrollment token) can pick up the
+same host identity.
 
 ## Monitor Types (from config.toml)
 

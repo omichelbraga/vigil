@@ -171,6 +171,18 @@ fn default_agent_name() -> String {
 }
 
 fn default_buffer_path() -> String {
+    // On Windows the service runs from C:\Windows\System32 (the default CWD
+    // for SCM-launched services). A relative buffer path would land in a
+    // system directory the agent can't write to, so pin it to ProgramData.
+    #[cfg(windows)]
+    {
+        if let Some(dir) = crate::vigil_data_dir() {
+            return dir
+                .join("vigil-buffer.db")
+                .to_string_lossy()
+                .into_owned();
+        }
+    }
     "vigil-buffer.db".to_string()
 }
 

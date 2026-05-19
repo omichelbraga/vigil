@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Vigil agent — Windows Installer source (WiX v3).
+
+  Built by `cargo wix` (or directly via candle.exe + light.exe). The build
+  expects vigil-agent.exe and vigil-tray.exe to exist under
+  $(var.CargoTargetBinDir) (= target/<triple>/release/) — the release-msi
+  GitHub Actions workflow builds both before invoking cargo-wix.
+
+  Layout produced on the host:
+    C:\Program Files\Vigil\
+      vigil-agent.exe         — service binary, runs as LocalSystem
+      vigil-tray.exe          — per-user tray + HUD companion
+    C:\ProgramData\Vigil\
+      config.toml             — written by `vigil-agent` enrollment (custom action)
+      vigil-buffer.db         — runtime, created by the agent
+      agent.log               — runtime, created by the agent
+
+  Install scenarios:
+    1. Fresh install WITH enrollment token  →
+         EnrollAgent custom action runs vigil-agent with the enroll flag,
+         which writes config.toml AND registers the VIGILAgent service.
+    2. Fresh install WITHOUT enrollment token  →
+         No custom action runs. Admin enrolls manually post-install via
+         the enroll flag.
+    3. Reinstall / upgrade with existing config.toml  →
+         InstallServiceOnly custom action runs vigil-agent with the
+         install-service flag to re-register the service against the
+         existing config. Enrollment token (if provided) is ignored to
+         avoid clobbering a working install.
+
+  Uninstall: RemoveAgentService stops + deletes the VIGILAgent service before
+  file removal. ProgramData\Vigil is intentionally preserved so config and
+  buffered events survive reinstall.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="Vigil Monitoring Agent"
+    UpgradeCode="3f12f714-be1c-4f0d-ad29-3c5729e681cf"
+    Manufacturer="Vigil"
+    Language="1033"
+    Codepage="1252"
+    Version="$(var.Version)">
+
+    <Package
+      Id="*"
+      Keywords="Installer"
+      Description="Vigil server monitoring agent (vigil-agent + vigil-tray)"
+      Manufacturer="Vigil"
+      InstallerVersion="500"
+      Languages="1033"
+      Compressed="yes"
+      InstallScope="perMachine"
+      SummaryCodepage="1252" />
+
+    <!-- Auto-uninstall previous version on upgrade. Same UpgradeCode + higher
+         Version = clean major upgrade (existing install removed, new one
+         installed, ProgramData preserved because we don't own it). -->
+    <MajorUpgrade
+      Schedule="afterInstallInitialize"
+      DowngradeErrorMessage="A newer version of Vigil agent is already installed. Uninstall it first to downgrade." />
+
+    <Media Id="1" Cabinet="vigil.cab" EmbedCab="yes" DiskPrompt="CD-ROM #1" />
+    <Property Id="DiskPrompt" Value="Vigil Agent Installation" />
+
+    <!-- MSI properties accepted from the command line:
+           msiexec /i vigil-agent.msi /qn `
+             VIGIL_ENROLL_TOKEN=XWZK-NBT6 `
+             VIGIL_HUB_URL=http://hub.example.com:3000
+
+         Hidden+Secure keeps the token out of MsiLog and lets the property
+         flow into a deferred custom action via CustomActionData. -->
+    <Property Id="VIGIL_ENROLL_TOKEN" Hidden="yes" Secure="yes" />
+    <Property Id="VIGIL_HUB_URL" Secure="yes" />
+
+    <!-- Detect an existing config.toml so we skip re-enrollment on reinstall.
+         DirectorySearch sets VIGIL_CONFIG_EXISTS to the full path when found,
+         empty otherwise. -->
+    <Property Id="VIGIL_CONFIG_EXISTS" Secure="yes">
+      <DirectorySearch Id="ProgramDataVigil" Path="[CommonAppDataFolder]Vigil" Depth="0">
+        <FileSearch Name="config.toml" />
+      </DirectorySearch>
+    </Property>
+
+    <!-- Standard ARP (Add/Remove Programs) metadata. -->
+    <Property Id="ARPHELPLINK" Value="https://github.com/anthropics/vigil" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="Vigil">
+          <!-- Service binary. KeyPath=yes makes this file the component's
+               install marker. -->
+          <Component Id="VigilAgentExe"
+                     Guid="7bfecd6e-03ac-41f2-98e9-8f0612310788"
+                     Win64="yes">
+            <File Id="VigilAgentExeFile"
+                  Source="$(var.CargoTargetBinDir)\vigil-agent.exe"
+                  KeyPath="yes" />
+          </Component>
+
+          <!-- Tray + HUD companion. Auto-start for any user who logs in via
+               HKLM Run; this is machine-wide so the registry entry lives in
+               the same component as the binary. -->
+          <Component Id="VigilTrayExe"
+                     Guid="b1d4f7e2-8a3c-4f6e-9c2b-5e8a0f4d1c93"
+                     Win64="yes">
+            <File Id="VigilTrayExeFile"
+                  Source="$(var.CargoTargetBinDir)\vigil-tray.exe"
+                  KeyPath="no" />
+            <RegistryValue
+              Root="HKLM"
+              Key="Software\Microsoft\Windows\CurrentVersion\Run"
+              Name="VigilTray"
+              Value="&quot;[INSTALLDIR]vigil-tray.exe&quot;"
+              Type="string"
+              KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <!-- Start Menu shortcut for the tray app. -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Vigil">
+          <Component Id="VigilTrayShortcut"
+                     Guid="d3c8e6a1-9f7b-4d2e-a4c5-7b9e1f0c8d62">
+            <Shortcut Id="VigilTrayStartMenu"
+                      Name="Vigil Tray"
+                      Description="Vigil monitoring tray + HUD"
+                      Target="[INSTALLDIR]vigil-tray.exe"
+                      WorkingDirectory="INSTALLDIR" />
+            <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall" />
+            <RegistryValue
+              Root="HKCU"
+              Key="Software\Vigil"
+              Name="StartMenuShortcut"
+              Type="integer"
+              Value="1"
+              KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="MainFeature"
+             Title="Vigil Agent"
+             Description="Vigil monitoring agent and tray companion"
+             Level="1"
+             ConfigurableDirectory="INSTALLDIR">
+      <ComponentRef Id="VigilAgentExe" />
+      <ComponentRef Id="VigilTrayExe" />
+      <ComponentRef Id="VigilTrayShortcut" />
+    </Feature>
+
+    <!-- ====================================================================
+         Custom Actions
+         ====================================================================
+
+         WiX deferred custom actions cannot read properties directly because
+         they run elevated in a separate process. The pattern is:
+           1. An immediate action (Set<Name>Cmd) writes
+              CustomActionData=<value> at sequencing time.
+           2. The deferred action reads it via Session.Property("CustomActionData").
+
+         Here we shell out to vigil-agent.exe (via cmd.exe to get exit-code
+         tolerance) so we don't reinvent service registration in WiX.
+    -->
+
+    <!-- Always-run on uninstall: stop + delete the VIGILAgent service before
+         file removal so the .exe is not in use. -->
+    <CustomAction
+      Id="RemoveAgentService"
+      FileKey="VigilAgentExeFile"
+      ExeCommand="--remove-service"
+      Execute="deferred"
+      Impersonate="no"
+      Return="ignore" />
+
+    <!-- Enrollment path: token + no existing config. Writes config.toml AND
+         registers the service. -->
+    <CustomAction
+      Id="SetEnrollAgentCmd"
+      Property="EnrollAgent"
+      Value="&quot;[INSTALLDIR]vigil-agent.exe&quot; --enroll &quot;[VIGIL_ENROLL_TOKEN]&quot; --hub-url &quot;[VIGIL_HUB_URL]&quot;" />
+    <!-- Uses WixQuietExec64 (vs. WixQuietExec) because the MSI is 64-bit
+         and ships only on x64 Windows. WixUtilExtension is loaded by
+         cargo-wix's default candle/light invocation, so no extra flags
+         are needed. -->
+    <CustomAction
+      Id="EnrollAgent"
+      BinaryKey="WixCA"
+      DllEntry="WixQuietExec64"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+
+    <!-- Reinstall path: existing config, no token (or token ignored because
+         config wins). Just (re)register the service against the existing
+         config. -->
+    <CustomAction
+      Id="InstallServiceOnly"
+      FileKey="VigilAgentExeFile"
+      ExeCommand="--install-service"
+      Execute="deferred"
+      Impersonate="no"
+      Return="check" />
+
+    <InstallExecuteSequence>
+      <!-- On uninstall (and major-upgrade-driven uninstall): stop the
+           service before files are removed. -->
+      <Custom Action="RemoveAgentService" Before="RemoveFiles">
+        Installed AND (REMOVE="ALL" OR UPGRADINGPRODUCTCODE)
+      </Custom>
+
+      <!-- On fresh install with token + no existing config: enroll.
+           SetEnrollAgentCmd must precede EnrollAgent so CustomActionData
+           is populated. -->
+      <Custom Action="SetEnrollAgentCmd" Before="EnrollAgent">
+        NOT Installed AND VIGIL_ENROLL_TOKEN AND NOT VIGIL_CONFIG_EXISTS
+      </Custom>
+      <Custom Action="EnrollAgent" After="InstallFiles">
+        NOT Installed AND VIGIL_ENROLL_TOKEN AND NOT VIGIL_CONFIG_EXISTS
+      </Custom>
+
+      <!-- On fresh install with existing config: register service only. -->
+      <Custom Action="InstallServiceOnly" After="InstallFiles">
+        NOT Installed AND VIGIL_CONFIG_EXISTS
+      </Custom>
+    </InstallExecuteSequence>
+
+    <!-- No UI = silent-install friendly out of the box. msiexec /qn works
+         immediately. If a basic dialog is wanted later, swap in WixUI_Minimal
+         and bundle a License.rtf. -->
+  </Product>
+</Wix>

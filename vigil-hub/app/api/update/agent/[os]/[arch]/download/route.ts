@@ -67,6 +67,7 @@ export async function GET(
         os,
         arch,
         isActive: true,
+        artifactType: "exe-update", // never serve an MSI on the in-place update channel
       },
       orderBy: { createdAt: "desc" },
       select: {

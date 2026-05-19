@@ -14,6 +14,7 @@ const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
 const VALID_OS = new Set(["linux", "windows"]);
 const VALID_ARCH = new Set(["amd64", "arm64"]);
+const VALID_ARTIFACT_TYPES = new Set(["exe-update", "msi-installer"]);
 const VERSION_RE = /^\d+\.\d+\.\d+(-[\w.]+)?$/;
 const HEX_RE = /^[0-9a-fA-F]+$/;
 
@@ -21,7 +22,8 @@ function storageDir(): string {
   return process.env.AGENT_BINARIES_PATH || "/var/lib/vigil/agent-releases";
 }
 
-function extFor(os: string): string {
+function extFor(os: string, artifactType: string): string {
+  if (artifactType === "msi-installer") return ".msi";
   return os === "windows" ? ".exe" : "";
 }
 
@@ -328,6 +330,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const os = (ctx.fields.get("os") ?? "").trim().toLowerCase();
   const arch = (ctx.fields.get("arch") ?? "").trim().toLowerCase();
   const version = (ctx.fields.get("version") ?? "").trim();
+  const artifactTypeRaw = (ctx.fields.get("artifactType") ?? "").trim();
+  // Default to exe-update for backwards compatibility — callers that pre-date
+  // the MSI channel never set the field.
+  const artifactType = artifactTypeRaw === "" ? "exe-update" : artifactTypeRaw;
   const signatureRaw = ctx.fields.get("signature") ?? "";
   const signedByRaw = ctx.fields.get("signedBy") ?? "";
   const expectedSha256Raw = ctx.fields.get("expectedSha256") ?? "";
@@ -343,6 +349,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!VALID_ARCH.has(arch)) {
     await cleanup();
     return bad(400, `arch must be one of: ${[...VALID_ARCH].join(", ")}`);
+  }
+  if (!VALID_ARTIFACT_TYPES.has(artifactType)) {
+    await cleanup();
+    return bad(
+      400,
+      `artifactType must be one of: ${[...VALID_ARTIFACT_TYPES].join(", ")}`,
+    );
+  }
+  if (artifactType === "msi-installer" && os !== "windows") {
+    await cleanup();
+    return bad(400, "msi-installer artifacts are only valid for os=windows");
   }
   if (!VERSION_RE.test(version)) {
     await cleanup();
@@ -389,7 +406,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const ext = extFor(os);
+  const ext = extFor(os, artifactType);
   const finalName = `vigil-agent-${os}-${arch}-${version}-${sha256.slice(0, 12)}${ext}`;
   const finalPath = path.join(dir, finalName);
 
@@ -403,14 +420,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // Reject duplicate (os, arch, version).
+  // Reject duplicate (os, arch, version, artifactType). Two artifact types
+  // can coexist for the same version (one .exe for auto-update, one .msi for
+  // first install).
   const existing = await db.agentRelease.findFirst({
-    where: { os, arch, version },
+    where: { os, arch, version, artifactType },
     select: { id: true },
   });
   if (existing) {
     await unlink(finalPath).catch(() => undefined);
-    return bad(409, `Release ${os}/${arch}/${version} already exists`);
+    return bad(
+      409,
+      `Release ${os}/${arch}/${version} (${artifactType}) already exists`,
+    );
   }
 
   const created = await db.agentRelease.create({
@@ -423,6 +445,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       filePath: finalPath,
       fileSize: BigInt(ctx.bytesWritten),
       isActive: false,
+      artifactType,
       signature,
       signedBy,
       uploadedBy: authz.user.id,
@@ -435,6 +458,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       os,
       arch,
       version,
+      artifactType,
       sha256,
       signed: signature !== null,
       fileSize: ctx.bytesWritten,
@@ -447,6 +471,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       os: created.os,
       arch: created.arch,
       version: created.version,
+      artifactType: created.artifactType,
       sha256: created.sha256,
       filename: created.filename,
       filePath: created.filePath,

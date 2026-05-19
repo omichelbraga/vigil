@@ -30,6 +30,7 @@ export async function GET(
         os,
         arch,
         isActive: true,
+        artifactType: "exe-update", // version-check is the auto-update probe only
       },
       orderBy: { createdAt: "desc" },
       select: {

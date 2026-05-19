@@ -127,19 +127,39 @@ sudo /opt/vigil/vigil-agent \
 # Approve in Hub: Agents → Approve pending agent
 ```
 
-### Windows Agent
+### Windows Agent (MSI installer)
 
-1. Download `vigil-agent.exe` from the Hub (or build with `cargo build --target x86_64-pc-windows-gnu --release`)
-2. Open PowerShell as Administrator
+The Hub serves a Windows MSI at a token-gated install URL. The MSI installs
+`vigil-agent.exe` and `vigil-tray.exe` to `C:\Program Files\Vigil\`, creates
+`C:\ProgramData\Vigil\` for config + buffer + logs, enrolls with the Hub,
+and registers the `VIGILAgent` service.
+
+1. In the Hub, **Agents → Add agent** → copy the install command (already
+   contains your one-shot enrollment token).
+2. Open PowerShell **as Administrator** on the target host.
 3. Run:
 ```powershell
-.\vigil-agent.exe --enroll YOUR_TOKEN --hub-url http://YOUR_HUB_IP:3000
+$token = "XWZK-NBT6"  # one-shot enrollment token from the Hub
+$hub   = "http://YOUR_HUB_IP:3000"
+
+Invoke-WebRequest "$hub/api/install/agent/windows/amd64?token=$token" `
+  -OutFile vigil-agent.msi
+
+msiexec /i vigil-agent.msi /qn `
+  VIGIL_ENROLL_TOKEN=$token `
+  VIGIL_HUB_URL=$hub
 ```
-4. Approve in Hub dashboard
-5. Install as Windows service:
+4. Approve the host in the Hub dashboard.
+
+Service control:
 ```powershell
-.\vigil-agent.exe --install
+Get-Service VIGILAgent      # status
+Restart-Service VIGILAgent  # restart
+msiexec /x {ProductCode} /qn  # uninstall (or use Add/Remove Programs)
 ```
+
+See [INSTALLER.md](INSTALLER.md) for fleet rollout via GPO/Intune, upgrade
+semantics, and the SmartScreen/code-signing gap.
 
 ## 8. Add Your First Check
 

@@ -43,7 +43,7 @@ A production-grade monitoring platform for IT teams. No SaaS, no subscriptions, 
 - **Admin → Audit** — full audit log with filters + CSV/JSON export.
 - **Admin → Integrations** — one card per channel with edit / test / recent-deliveries.
 - **Admin → System** — process/event-loop/DB/queue/job metrics + run-now buttons + diagnostics zip export.
-- **Admin → Agent Releases** — upload binary, sign, activate per `(os, arch)`, per-release drift card.
+- **Admin → Agent Releases** — upload binaries on two channels: `exe-update` (ed25519-signed, fed into the auto-update path) and `msi-installer` (Windows MSI for first install). Activate per `(os, arch, channel)`, per-release drift card.
 - **Admin → Rollouts** — create + pause/resume/cancel staged rollouts.
 
 ### Power-user UX
@@ -119,13 +119,25 @@ systemctl --user enable --now vigil-hub
 # 7. (optional) Enable the Hub watchdog so someone notices if the Hub itself dies
 scripts/watchdog-install.sh
 
-# 8. Enroll your first agent
+# 8. Enroll your first agent (Linux)
 # From the Hub UI: Agents → "Issue enrollment token"
 sudo ./vigil-agent --enroll YOUR_TOKEN --hub-url http://YOUR_IP:3000
 # Then approve the pending agent from the Hub's Agents page
 
-# 9. (Windows workstations) copy vigil-tray.exe + WebView2Loader.dll next to
-# the agent install; double-click → tray icon appears → first-run wizard if needed.
+# 9. Enroll a Windows host (MSI installer)
+# The Hub builds + serves a single .msi that bundles vigil-agent.exe and
+# vigil-tray.exe, installs them under C:\Program Files\Vigil\, creates
+# C:\ProgramData\Vigil\ for runtime state, enrolls with the Hub, and
+# registers the VIGILAgent service with crash recovery.
+#
+#   PowerShell (Administrator) on the target host:
+#     $token = "XWZK-NBT6"  # one-shot enrollment token from the Hub
+#     $hub   = "http://YOUR_IP:3000"
+#     Invoke-WebRequest "$hub/api/install/agent/windows/amd64?token=$token" -OutFile vigil-agent.msi
+#     msiexec /i vigil-agent.msi /qn VIGIL_ENROLL_TOKEN=$token VIGIL_HUB_URL=$hub
+#
+# Then approve the pending agent from the Hub's Agents page.
+# See docs/INSTALLER.md for GPO/Intune fleet rollout + the SmartScreen gap.
 ```
 
 ## Documentation
@@ -135,6 +147,7 @@ sudo ./vigil-agent --enroll YOUR_TOKEN --hub-url http://YOUR_IP:3000
 | [docs/QUICKSTART.md](./docs/QUICKSTART.md) | Full deploy walk-through |
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | System design + data flow |
 | [docs/AGENT.md](./docs/AGENT.md) | Agent config, CLI flags, install |
+| [docs/INSTALLER.md](./docs/INSTALLER.md) | Windows MSI installer reference (layout, properties, GPO/Intune, troubleshooting) |
 | [docs/HUB.md](./docs/HUB.md) | Hub env vars, systemd, API reference |
 | [docs/CHECKS.md](./docs/CHECKS.md) | Every monitor type — fields, behaviour, alert triggers |
 | [docs/NOTIFICATIONS.md](./docs/NOTIFICATIONS.md) | Channels + custom payload templates |
