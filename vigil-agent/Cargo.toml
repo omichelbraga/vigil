@@ -1,6 +1,6 @@
 [package]
 name = "vigil-agent"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 description = "Vigil server monitoring agent"
 
@@ -11,7 +11,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
-rustls = "0.23"
+# `ring` feature is required so we can install ring as the rustls crypto
+# provider in main(). Default provider (aws-lc-rs) needs a C compile step
+# that's fiddly on Windows cross-builds.
+rustls = { version = "0.23", features = ["ring"] }
 tokio-rustls = "0.26"
 rcgen = "0.13"
 rusqlite = { version = "0.32", features = ["bundled"] }
