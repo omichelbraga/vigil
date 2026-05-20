@@ -5,7 +5,12 @@ const devOrigins = process.env.NEXT_ALLOWED_DEV_ORIGINS
   : [];
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Standalone output is incompatible with our custom server (server.ts) —
+  // standalone bakes Next.js's own server.js entrypoint and only traces what
+  // it imports, so libs that server.ts pulls in (ws-server, cert-monitor,
+  // expiry-monitor, rollout-runner) get dropped. We run server.ts directly
+  // via tsx in production instead, with the full project + node_modules
+  // available at runtime.
   serverExternalPackages: ["argon2"],
   allowedDevOrigins: devOrigins,
   experimental: {
