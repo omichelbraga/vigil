@@ -299,6 +299,16 @@ fn bootstrap_telemetry(
 }
 
 fn main() {
+    // rustls 0.23 panics at first TLS use if it can't pick a CryptoProvider
+    // automatically. Our dep tree pulls in both `ring` (via reqwest's
+    // rustls-tls feature) and `aws-lc-rs` (rustls's own default), so the
+    // auto-pick is ambiguous — the panic message is
+    // "Could not automatically determine the process-level CryptoProvider".
+    // Install ring explicitly here, before any HTTP/WS client is created.
+    // Ignore the Err — install_default() returns Err only when a provider
+    // was already installed (idempotent on re-entry).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Peek at --log-format early so service-mode dispatch and enrollment also
     // honour the format. Full parse happens later inside async_main.
     let early_format = std::env::args()
