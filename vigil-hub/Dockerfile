@@ -6,18 +6,12 @@
 # ===== deps stage =====
 FROM node:20-alpine AS deps
 WORKDIR /app
-# Workspace root manifest + lockfile, plus the Hub's own manifest. We don't
-# pull the Rust crates (vigil-agent, vigil-tray) — they aren't in the npm
-# workspace and aren't needed for the Hub image.
 COPY package.json package-lock.json ./
 COPY vigil-hub/package.json ./vigil-hub/package.json
-# Strict reproducible install of ALL deps for the Hub workspace, including
-# devDependencies. Build-time tooling (tailwindcss, @tailwindcss/postcss,
-# typescript, eslint-config-next, …) lives under devDependencies and is
-# required to compile the app — `next build` invokes the PostCSS pipeline
-# which needs @tailwindcss/postcss installed. Pruning happens implicitly:
-# the runner stage copies only Next.js's standalone bundle, which is
-# self-trimmed (Vercel's tracer keeps only the runtime closure).
+# All deps (incl. devDependencies). next build needs tailwindcss / typescript
+# / etc. at build time, and the runner needs tsx at runtime to execute the
+# custom server.ts. We rely on next.config.ts dropping standalone output —
+# the runner copies the whole workspace, not a slimmed bundle.
 RUN npm ci --workspace vigil-hub --include-workspace-root
 
 # ===== builder stage =====
@@ -27,54 +21,47 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/vigil-hub/node_modules ./vigil-hub/node_modules
 COPY package.json package-lock.json ./
 COPY vigil-hub ./vigil-hub
-# Generate Prisma client (needs to happen after the schema is in place).
-# Use vigil-hub's locally-installed prisma binary explicitly: the workspace
-# root has a transitive prisma@7.x hoisted next to it, and `npx prisma`
-# from inside vigil-hub/ resolves to that one first, which can't parse
-# inline `url = env(...)` and silently produces a stale client.
+# Use vigil-hub's locally-pinned prisma 6.x — npx would resolve to the
+# transitive 7.x hoisted at the workspace root, which can't parse our schema.
 RUN cd vigil-hub && ./node_modules/.bin/prisma generate
-# Build Next.js standalone for the vigil-hub workspace.
+# next build compiles the App Router output into vigil-hub/.next/. We don't
+# use standalone output (see next.config.ts) because the project uses a
+# custom server (vigil-hub/server.ts) that needs runtime access to lib/*
+# modules the standalone tracer would drop.
 RUN npm run build --workspace vigil-hub
 
 # ===== runner stage =====
+# Run server.ts directly via tsx — it owns the HTTP listener, mounts
+# /ws/agent for agent WebSocket upgrades, and starts the cert/expiry/rollout
+# background runners. Next.js handles HTTP routing through
+# app.getRequestHandler().
 FROM node:20-alpine AS runner
+WORKDIR /app
 ENV NODE_ENV=production
 RUN addgroup -g 1001 nodejs && adduser -S -u 1001 nextjs
 
-# Preserve Next.js's standalone layout intact. The standalone bundle is
-# already shaped for direct execution:
-#   /app/node_modules/                   ← hoisted workspace-root deps
-#   /app/vigil-hub/server.js             ← entrypoint
-#   /app/vigil-hub/.next/...             ← compiled code + symlinks that
-#                                          point at ../../../../vigil-hub/
-#                                          node_modules/@prisma/client
-#   /app/vigil-hub/node_modules/...      ← member deps; @prisma/client lives
-#                                          here and the satellite symlink
-#                                          resolves to it
-# Flattening this layout (the previous approach) broke the Prisma 6 hash-
-# suffixed client symlink — `Cannot find module @prisma/client-<hash>`.
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/standalone /app
-# public/ and .next/static are not part of the standalone trace.
-COPY --from=builder /app/vigil-hub/public /app/vigil-hub/public
-COPY --from=builder --chown=nextjs:nodejs /app/vigil-hub/.next/static /app/vigil-hub/.next/static
-# Prisma schema kept alongside the runnable bundle for diagnostics.
-COPY --from=builder /app/vigil-hub/prisma /app/vigil-hub/prisma
+# Copy the whole built workspace. Includes:
+#   /app/node_modules/                ← workspace-root hoisted deps
+#   /app/vigil-hub/node_modules/      ← member-pinned deps (prisma 6.x, ...)
+#   /app/vigil-hub/.next/             ← compiled app
+#   /app/vigil-hub/server.ts          ← entrypoint
+#   /app/vigil-hub/lib/               ← ws-server, cert-monitor, ...
+# Bigger image than standalone, but the only reliable shape that supports
+# the custom server + traced symlinks (Prisma 6's hashed client) at once.
+COPY --from=builder --chown=nextjs:nodejs /app /app
 
 WORKDIR /app/vigil-hub
 USER nextjs
 EXPOSE 3000
-# Bind Next.js's standalone server to all interfaces. Without this it picks
-# the container's own hostname (e.g. "5015036523f2") and only listens on
-# that interface — both the HEALTHCHECK (wget http://localhost:3000) and
-# Docker's NAT port-forward (0.0.0.0 → container) fail with ECONNREFUSED.
+# Bind to all interfaces (without HOSTNAME=0.0.0.0, Next picks the container
+# hostname and the wget healthcheck / Docker NAT both fail with ECONNREFUSED).
 ENV HOSTNAME=0.0.0.0
-# Use 127.0.0.1 explicitly: `localhost` in Alpine resolves to ::1 first and
-# Node's listen(0.0.0.0) is IPv4-only, so wget gets ECONNREFUSED on the v6
-# attempt before falling back. Pinning to v4 makes the healthcheck reliable.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+# 127.0.0.1 not localhost — Alpine resolves localhost to ::1 first; Node
+# listens v4-only, wget never falls back from v6.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/api/health || exit 1
-# Migrations run in a separate one-shot sidecar service (see docker-compose
-# `vigil-migrate`), which uses this Dockerfile's `builder` stage and has the
-# full prisma CLI dependency graph (including hoisted transitives like
-# `effect`). Once that exits 0, vigil-hub starts and trusts the schema.
-CMD ["node", "server.js"]
+# Migrations run in the vigil-migrate sidecar (compose); by the time
+# vigil-hub starts the schema is already in place. tsx is hoisted to the
+# workspace root (/app/node_modules/.bin/tsx) by npm workspaces, so we
+# invoke it from there.
+CMD ["/app/node_modules/.bin/tsx", "server.ts"]
